@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "legal-email-converter"
+version = "0.1.0"
+description = "Convert legal email archives and export mbox review packages"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "extract-msg>=0.50.0",
+  "ocrmypdf>=16.0.0",
+]
+
+[project.scripts]
+legal-email-converter = "legal_email_converter.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
