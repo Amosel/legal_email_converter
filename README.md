@@ -259,6 +259,8 @@ Behavior:
 - Paths are normalized consistently across commands (including unescaping `\ ` from quoted shell paths).
 - Document paths inside output/manifest are relative to the input root.
 - Manifest includes per-file rows: `kind`, `relative_path`, `folder`, `subfolders`, `topic`, `content_chars`, `has_error`.
+- Manifest also includes per-file `date_signal` and `summary.date_signals` (for future query-assisted sorting flag).
+- Internal Ollama client support exists (`/api/generate`, `/api/embed`) for future query-assisted date sorting; not enabled via CLI flag yet.
 
 Optional:
 

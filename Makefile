@@ -29,7 +29,7 @@ TEST_SCOPE ?= all
 INTEGRATION_CONFIG ?= tests/integration_pdf_matrix.local.yaml
 STRICT_INTEGRATION ?= 0
 
-.PHONY: help install run-all extract-archives create-mbox create-pdf-mbox generate-reports filter-emails list-emails complete-inventory export-mbox unified-export fixtures-hard-pdf-fetch fixtures-hard-pdf-list test test-all test-unit test-integration test-real-integration test-mbox-export test-cli test-unified-export test-unified-acceptance unified-export-e2e integration-matrix integration-init-yaml bench only-integration only-unit venv install-cli install-cli-user install-cli-pipx cli-help cli-smoke ocr-bench
+.PHONY: help install run-all extract-archives create-mbox create-pdf-mbox generate-reports filter-emails list-emails complete-inventory export-mbox unified-export fixtures-hard-pdf-fetch fixtures-hard-pdf-list test test-all test-unit test-integration test-real-integration test-mbox-export test-cli test-ollama-client test-unified-export test-unified-acceptance unified-export-e2e integration-matrix integration-init-yaml bench only-integration only-unit venv install-cli install-cli-user install-cli-pipx cli-help cli-smoke ocr-bench
 
 help:
 	@echo ""
@@ -55,6 +55,7 @@ help:
 	@echo "Testing"
 	@echo "  make test                   Exhaustive local tests (unit + integration harness)"
 	@echo "  make test-unit              Run unit-focused tests only"
+	@echo "  make test-ollama-client     Run Ollama client unit tests"
 	@echo "  make test-unified-export    Run unified-export unit tests"
 	@echo "  make test-unified-acceptance Run unified-import acceptance matrix"
 	@echo "  make test-integration       Run integration-focused tests only"
@@ -173,13 +174,16 @@ test-pdf-ingest:
 test-cli:
 	$(PYTHON) -m unittest tests/test_cli.py -v
 
+test-ollama-client:
+	$(PYTHON) -m unittest tests/test_ollama_client.py -v
+
 test-unified-export:
 	$(PYTHON) -m unittest tests/test_unified_export.py -v
 
 test-unified-acceptance:
 	$(PYTHON) -m unittest tests/test_unified_import_acceptance.py -v
 
-test-unit: test-mbox-export test-cli test-unified-export test-unified-acceptance
+test-unit: test-mbox-export test-cli test-ollama-client test-unified-export test-unified-acceptance
 
 test-integration: test-pdf-ingest
 	@set -e; \
