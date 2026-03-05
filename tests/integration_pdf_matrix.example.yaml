@@ -1,0 +1,63 @@
+defaults:
+  out_dir: /tmp/lec_integration_matrix
+  ocr_jobs: 2
+  ocr_timeout: 1800
+  run_timeout_seconds: 1800
+  progress_style: plain
+  quiet: true
+  no_color: true
+
+cases:
+  - id: scanned_large_pdf
+    input: /ABS/PATH/TO/large_scanned.pdf
+    runs:
+      - name: quick_50
+        profile: quick
+        max_pages: 50
+        expect:
+          run_health_in: [WARN, FAIL]
+          status_in: [low_text, failed]
+      - name: balanced_50
+        profile: balanced
+        max_pages: 50
+        expect:
+          run_health_in: [PASS, WARN]
+          status_in: [good, likely_bad_ocr, low_text]
+      - name: thorough_full
+        profile: thorough
+        expect:
+          run_health_in: [PASS, WARN]
+          status_in: [good, likely_bad_ocr]
+
+  - id: text_layer_contract
+    input: /ABS/PATH/TO/born_digital_contract.pdf
+    runs:
+      - name: quick_25
+        profile: quick
+        max_pages: 25
+        expect:
+          run_health_in: [PASS]
+          status_in: [good]
+      - name: balanced_50
+        profile: balanced
+        max_pages: 50
+        expect:
+          run_health_in: [PASS]
+          status_in: [good]
+
+  - id: hard_ocr_timeout_case
+    input: /ABS/PATH/TO/hard_scan.pdf
+    runs:
+      - name: balanced_low_timeout
+        profile: balanced
+        ocr_timeout: 120
+        max_pages: 50
+        expect:
+          run_health_in: [WARN, FAIL]
+          status_in: [failed, likely_bad_ocr, low_text]
+      - name: thorough_high_timeout_retry
+        profile: thorough
+        ocr_timeout: 2400
+        expect:
+          run_health_in: [PASS, WARN]
+          status_in: [good, likely_bad_ocr]

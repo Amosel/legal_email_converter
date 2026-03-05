@@ -1,4 +1,9 @@
 PYTHON ?= python3
+ifneq ($(origin PYTHON),command line)
+ifneq ("$(wildcard .venv/bin/python)","")
+PYTHON := .venv/bin/python
+endif
+endif
 SCRIPTS := scripts
 VENV ?= .venv
 VENV_PYTHON := $(VENV)/bin/python
@@ -20,8 +25,11 @@ FORCE ?= 0
 PDF_WORKERS ?=
 PDF_OCR_JOBS ?=
 PDF_SKIP_OCR ?= 0
+TEST_SCOPE ?= all
+INTEGRATION_CONFIG ?= tests/integration_pdf_matrix.local.yaml
+STRICT_INTEGRATION ?= 0
 
-.PHONY: help install run-all extract-archives create-mbox create-pdf-mbox generate-reports filter-emails list-emails complete-inventory export-mbox test test-mbox-export venv install-cli install-cli-user install-cli-pipx cli-help cli-smoke ocr-bench
+.PHONY: help install run-all extract-archives create-mbox create-pdf-mbox generate-reports filter-emails list-emails complete-inventory export-mbox test test-all test-unit test-integration test-real-integration test-mbox-export test-cli integration-matrix integration-init-yaml bench only-integration only-unit venv install-cli install-cli-user install-cli-pipx cli-help cli-smoke ocr-bench
 
 help:
 	@echo ""
@@ -41,10 +49,17 @@ help:
 	@echo "  make export-mbox            Step 5: raw .mbox -> single review zip"
 	@echo ""
 	@echo "Testing"
-	@echo "  make test                   Run unit tests"
+	@echo "  make test                   Exhaustive local tests (unit + integration harness)"
+	@echo "  make test-unit              Run unit-focused tests only"
+	@echo "  make test-integration       Run integration-focused tests only"
+	@echo "  make TEST_SCOPE=unit|integration|all test"
+	@echo "  make test-real-integration INTEGRATION_CONFIG=tests/integration_pdf_matrix.local.yaml"
+	@echo "  make integration-init-yaml  Create local YAML matrix config template"
+	@echo "  make integration-matrix      Run matrix using INTEGRATION_CONFIG (YAML)"
+	@echo "  make bench                  Run matrix and print concise benchmark table"
 	@echo ""
 	@echo "CLI Packaging"
-	@echo "  make install                Default install (requires pipx; global user CLI)"
+	@echo "  make install                Smart install (pipx if available, else local .venv)"
 	@echo "  make venv                   Create local virtual environment"
 	@echo "  make install-cli            Install CLI in venv (offline-safe fallback)"
 	@echo "  make install-cli-user       Install CLI via pip --user (puts command in user bin)"
@@ -108,7 +123,21 @@ export-mbox:
 	$(if $(filter 1 true TRUE yes YES,$(KEEP_ARTIFACTS)),--keep-artifacts,) \
 	$(if $(filter 1 true TRUE yes YES,$(FORCE)),--force,)
 
-test: test-mbox-export test-pdf-ingest
+test:
+	@set -e; \
+	scope="$(TEST_SCOPE)"; \
+	case "$(MAKECMDGOALS)" in \
+		*only-unit*) scope=unit ;; \
+		*only-integration*) scope=integration ;; \
+	esac; \
+	case "$$scope" in \
+		unit) $(MAKE) test-unit ;; \
+		integration) $(MAKE) test-integration ;; \
+		all) $(MAKE) test-all ;; \
+		*) echo "Unknown TEST_SCOPE=$$scope. Use unit|integration|all" >&2; exit 2 ;; \
+	esac
+
+test-all: test-unit test-integration
 
 test-mbox-export:
 	$(PYTHON) -m unittest tests/test_export_mbox_for_llm.py -v
@@ -116,7 +145,156 @@ test-mbox-export:
 test-pdf-ingest:
 	$(PYTHON) -m unittest tests/test_pdf_ingest.py -v
 
-install: install-cli-pipx
+test-cli:
+	$(PYTHON) -m unittest tests/test_cli.py -v
+
+test-unit: test-mbox-export test-cli
+
+test-integration: test-pdf-ingest
+	@set -e; \
+	if [ -f "$(INTEGRATION_CONFIG)" ]; then \
+		if ! $(PYTHON) -c "import yaml" >/dev/null 2>&1; then \
+			if [ "$(STRICT_INTEGRATION)" = "1" ]; then \
+				echo "STRICT_INTEGRATION=1 and PyYAML missing for $(INTEGRATION_CONFIG)." >&2; \
+				echo "Install with: pip install pyyaml" >&2; \
+				exit 2; \
+			fi; \
+			echo "Skipping real PDF integration matrix (PyYAML missing for $(INTEGRATION_CONFIG))."; \
+			echo "Install with: pip install pyyaml"; \
+		else \
+			echo "Detected real integration config at $(INTEGRATION_CONFIG)"; \
+			$(MAKE) test-real-integration INTEGRATION_CONFIG="$(INTEGRATION_CONFIG)"; \
+		fi; \
+	elif [ "$(STRICT_INTEGRATION)" = "1" ]; then \
+		echo "STRICT_INTEGRATION=1 but config not found: $(INTEGRATION_CONFIG)" >&2; \
+		exit 2; \
+	else \
+		echo "Skipping real PDF integration matrix (config not found: $(INTEGRATION_CONFIG))"; \
+		echo "Tip: run 'make integration-init-yaml' and fill real paths."; \
+	fi
+
+test-real-integration:
+	@set -e; \
+	if [ ! -f "$(INTEGRATION_CONFIG)" ]; then \
+		if [ "$(STRICT_INTEGRATION)" = "1" ]; then \
+			echo "Config not found: $(INTEGRATION_CONFIG)" >&2; \
+			echo "Tip: run 'make integration-init-yaml' then edit paths/expectations." >&2; \
+			exit 2; \
+		fi; \
+		echo "Skipping real integration matrix (config not found: $(INTEGRATION_CONFIG))."; \
+		echo "Tip: run 'make integration-init-yaml' then edit paths/expectations."; \
+		exit 0; \
+	fi; \
+	if ! $(PYTHON) -c "import yaml" >/dev/null 2>&1; then \
+		if [ "$(STRICT_INTEGRATION)" = "1" ]; then \
+			echo "Missing dependency: PyYAML" >&2; \
+			echo "Install with: pip install pyyaml" >&2; \
+			exit 2; \
+		fi; \
+		echo "Skipping real integration matrix (PyYAML not installed)."; \
+		echo "Install with: pip install pyyaml"; \
+		exit 0; \
+	fi; \
+	$(PYTHON) scripts/run_pdf_integration_matrix.py --config "$(INTEGRATION_CONFIG)"
+
+integration-matrix:
+	@set -e; \
+	cfg="$(if $(CONFIG),$(CONFIG),$(INTEGRATION_CONFIG))"; \
+	if [ ! -f "$$cfg" ]; then \
+		if [ "$$cfg" = "tests/integration_pdf_matrix.local.yaml" ]; then \
+			$(MAKE) integration-init-yaml; \
+			echo "Template created at $$cfg"; \
+		fi; \
+		if [ "$(STRICT_INTEGRATION)" = "1" ]; then \
+			echo "Config not found: $$cfg" >&2; \
+			echo "Next: edit $$cfg and rerun 'make integration-matrix'." >&2; \
+			exit 2; \
+		fi; \
+		echo "Skipping integration matrix (config not found: $$cfg)."; \
+		echo "Next: edit $$cfg and rerun 'make integration-matrix'."; \
+		exit 0; \
+	fi; \
+	if ! $(PYTHON) -c "import yaml" >/dev/null 2>&1; then \
+		if [ "$(STRICT_INTEGRATION)" = "1" ]; then \
+			echo "Missing dependency: PyYAML" >&2; \
+			echo "Install with: pip install pyyaml" >&2; \
+			exit 2; \
+		fi; \
+		echo "Skipping integration matrix (PyYAML not installed)."; \
+		echo "Install with: pip install pyyaml"; \
+		exit 0; \
+	fi; \
+	$(PYTHON) scripts/run_pdf_integration_matrix.py --config "$$cfg"
+
+integration-init-yaml:
+	@test -f tests/integration_pdf_matrix.local.yaml || cp tests/integration_pdf_matrix.example.yaml tests/integration_pdf_matrix.local.yaml
+	@echo "Ready: tests/integration_pdf_matrix.local.yaml"
+
+bench:
+	@set -e; \
+	py="$(PYTHON)"; \
+	cfg="$(INTEGRATION_CONFIG)"; \
+	if [ ! -f "$$cfg" ]; then \
+		$(MAKE) integration-init-yaml; \
+		echo "Template created at $$cfg"; \
+		if [ "$(STRICT_INTEGRATION)" = "1" ]; then \
+			echo "Config not found: $$cfg" >&2; \
+			echo "Next: edit $$cfg and rerun 'make bench'." >&2; \
+			exit 2; \
+		fi; \
+		echo "Skipping benchmark (config not ready)."; \
+		echo "Next: edit $$cfg and rerun 'make bench'."; \
+		exit 0; \
+	fi; \
+	if ! "$$py" -c "import yaml" >/dev/null 2>&1; then \
+		alt_py="$$(command -v python3 || true)"; \
+		if [ -n "$$alt_py" ] && [ "$$alt_py" != "$$py" ] && "$$alt_py" -c "import yaml" >/dev/null 2>&1; then \
+			echo "PyYAML available in $$alt_py; using that interpreter for bench."; \
+			py="$$alt_py"; \
+		fi; \
+	fi; \
+	if ! "$$py" -c "import yaml" >/dev/null 2>&1; then \
+		if [ "$$py" != "$(VENV)/bin/python" ]; then \
+			echo "PyYAML not available in $$py; switching to local .venv..."; \
+			$(MAKE) venv; \
+			py="$(VENV)/bin/python"; \
+		else \
+			echo "PyYAML not available in $$py; installing into existing .venv..."; \
+		fi; \
+		wheel="$$(ls -1 vendor/wheels/PyYAML-*.whl PyYAML-*.whl 2>/dev/null | head -n 1 || true)"; \
+		if [ -n "$$wheel" ] && "$$py" -m pip install "$$wheel"; then \
+			:; \
+		elif ! "$$py" -m pip install pyyaml; then \
+			echo "Automatic install failed for PyYAML in .venv." >&2; \
+			echo "Install manually with: $$py -m pip install pyyaml" >&2; \
+			echo "Or place wheel at: vendor/wheels/PyYAML-<ver>-*.whl" >&2; \
+			exit 2; \
+		fi; \
+		if ! "$$py" -c "import yaml" >/dev/null 2>&1; then \
+			echo "PyYAML install completed but import still fails for $$py." >&2; \
+			exit 2; \
+		fi; \
+	fi; \
+	echo "Using Python interpreter: $$py"; \
+	"$$py" scripts/run_pdf_integration_matrix.py --config "$$cfg" --bench
+
+# Backward-compatible aliases; keep canonical entrypoints as:
+#   make test-unit
+#   make test-integration
+only-integration:
+	@:
+
+only-unit:
+	@:
+
+install:
+	@set -e; \
+	if command -v pipx >/dev/null 2>&1; then \
+		$(MAKE) install-cli-pipx; \
+	else \
+		echo "pipx not found; falling back to local venv install (make install-cli)."; \
+		$(MAKE) install-cli; \
+	fi
 
 venv:
 	$(PYTHON) -m venv $(VENV)
