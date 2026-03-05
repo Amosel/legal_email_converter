@@ -257,6 +257,8 @@ Behavior:
   - folder input: `/path/to/case-folder/unified_case_export.txt`
   - file input: `/path/to/file-parent/unified_case_export.txt`
 - Paths are normalized consistently across commands (including unescaping `\ ` from quoted shell paths).
+- Document paths inside output/manifest are relative to the input root.
+- Manifest includes per-file rows: `kind`, `relative_path`, `folder`, `subfolders`, `topic`, `content_chars`, `has_error`.
 
 Optional:
 

@@ -20,6 +20,25 @@ class UnifiedDoc:
     error: str = ""
 
 
+def _base_root(input_path: Path) -> Path:
+    return input_path if input_path.is_dir() else input_path.parent
+
+
+def _relative_path(path: Path, *, base_root: Path) -> str:
+    try:
+        rel = path.resolve().relative_to(base_root.resolve())
+        return str(rel) if str(rel) else path.name
+    except Exception:
+        return path.name
+
+
+def _topic_from_relative(rel_path: str) -> str:
+    parts = Path(rel_path).parts
+    if len(parts) <= 1:
+        return "Root"
+    return parts[0]
+
+
 def discover_documents(input_path: Path) -> list[Path]:
     if input_path.is_file():
         return [input_path] if input_path.suffix.lower() in SUPPORTED_SUFFIXES else []
@@ -71,7 +90,7 @@ def _safe_extract(path: Path, *, skip_ocr: bool) -> UnifiedDoc:
         return UnifiedDoc(kind=path.suffix.lower().lstrip(".").upper(), path=path, metadata={}, content="", error=str(exc))
 
 
-def _write_txt(out_path: Path, source: Path, docs: list[UnifiedDoc]) -> None:
+def _write_txt(out_path: Path, source: Path, docs: list[UnifiedDoc], *, base_root: Path) -> None:
     with out_path.open("w", encoding="utf-8") as f:
         f.write("# Unified Export\n")
         f.write(f"GeneratedUTC: {datetime.now(timezone.utc).isoformat()}\n")
@@ -79,10 +98,11 @@ def _write_txt(out_path: Path, source: Path, docs: list[UnifiedDoc]) -> None:
         f.write(f"DocumentCount: {len(docs)}\n\n")
 
         for idx, doc in enumerate(docs, start=1):
+            rel_path = _relative_path(doc.path, base_root=base_root)
             f.write("=== DOCUMENT START ===\n")
             f.write(f"Index: {idx}\n")
             f.write(f"Type: {doc.kind}\n")
-            f.write(f"Path: {doc.path}\n")
+            f.write(f"Path: {rel_path}\n")
             for key, value in doc.metadata.items():
                 f.write(f"{key}: {value}\n")
             if doc.error:
@@ -101,6 +121,7 @@ def run_unified_export(
     in_path = Path(input_path).expanduser().resolve()
     if not in_path.exists():
         raise FileNotFoundError(f"Input not found: {in_path}")
+    base_root = _base_root(in_path)
 
     files = discover_documents(in_path)
     if not files:
@@ -110,24 +131,56 @@ def run_unified_export(
     out_file.parent.mkdir(parents=True, exist_ok=True)
 
     docs = [_safe_extract(path, skip_ocr=skip_ocr) for path in files]
-    _write_txt(out_file, in_path, docs)
+    _write_txt(out_file, in_path, docs, base_root=base_root)
 
-    failed = [str(d.path) for d in docs if d.error]
+    file_rows: list[dict[str, object]] = []
+    topic_counts: dict[str, int] = {}
+    failed: list[str] = []
+    for idx, doc in enumerate(docs, start=1):
+        rel_path = _relative_path(doc.path, base_root=base_root)
+        rel_parts = Path(rel_path).parts
+        folder = str(Path(rel_path).parent) if len(rel_parts) > 1 else "Root"
+        subfolders = list(rel_parts[:-1]) if len(rel_parts) > 1 else []
+        topic = _topic_from_relative(rel_path)
+        topic_counts[topic] = topic_counts.get(topic, 0) + 1
+        if doc.error:
+            failed.append(rel_path)
+        file_rows.append(
+            {
+                "index": idx,
+                "kind": doc.kind,
+                "relative_path": rel_path,
+                "folder": folder,
+                "subfolders": subfolders,
+                "topic": topic,
+                "content_chars": len(doc.content or ""),
+                "has_error": bool(doc.error),
+                "error": doc.error,
+                "metadata": doc.metadata,
+            }
+        )
+
     summary = {
         "total": len(docs),
         "msg": sum(1 for d in docs if d.kind == "MSG"),
         "pdf": sum(1 for d in docs if d.kind == "PDF"),
         "failed": len(failed),
+        "topics": topic_counts,
     }
 
     manifest_path = out_file.with_suffix(".manifest.json")
     manifest = {
         "status": "ok",
-        "input": str(in_path),
-        "output": str(out_file),
+        "input_root": str(base_root.name or "Root"),
+        "output_file": out_file.name,
         "summary": summary,
         "failed_files": failed,
+        "files": file_rows,
     }
     manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
-    manifest["manifest"] = str(manifest_path)
-    return manifest
+    return {
+        **manifest,
+        "input": str(in_path),
+        "output": str(out_file),
+        "manifest": str(manifest_path),
+    }

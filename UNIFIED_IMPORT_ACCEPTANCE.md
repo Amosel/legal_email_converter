@@ -34,6 +34,8 @@ Unified import must be deterministic and path-safe:
 - `manifest.summary.msg == discovered_msg_count`
 - `manifest.summary.pdf == discovered_pdf_count`
 - number of `=== DOCUMENT START ===` blocks equals discovered count.
+- document `Path:` fields are relative to input root.
+- `manifest.files[*].relative_path` are relative (no absolute source paths).
 
 ## Minimal combination matrix (one-file-per-type)
 

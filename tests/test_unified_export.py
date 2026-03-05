@@ -56,6 +56,13 @@ class UnifiedExportTests(unittest.TestCase):
             self.assertIn("=== DOCUMENT START ===", text)
             self.assertIn("Type: MSG", text)
             self.assertIn("Type: PDF", text)
+            self.assertIn("Path: email.msg", text)
+            self.assertIn("Path: doc.pdf", text)
+
+            manifest = (root / "out.manifest.json").read_text(encoding="utf-8")
+            self.assertIn('"relative_path": "email.msg"', manifest)
+            self.assertIn('"relative_path": "doc.pdf"', manifest)
+            self.assertIn('"topic": "Root"', manifest)
 
     def test_run_unified_export_requires_supported_files(self):
         with tempfile.TemporaryDirectory() as tmp:
