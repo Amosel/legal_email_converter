@@ -8,21 +8,33 @@ from pathlib import Path
 
 from .export_mbox_for_llm import export_mbox_review_package
 from .pdf_ingest import run_pdf_ingest, run_pdf_retry
+from .unified_export import run_unified_export
 
 
 def _normalize_cli_path_arg(raw: str | None) -> str | None:
     if raw is None:
         return None
-    if "\\" not in raw:
-        return raw
-    original = Path(raw).expanduser()
-    if original.exists():
-        return raw
-    # Users often quote a path and also escape spaces; unescape common shell escapes.
-    candidate = re.sub(r"\\([ ,()\[\]])", r"\1", raw)
-    if Path(candidate).expanduser().exists():
-        return candidate
-    return raw
+    # Users often quote a path and also escape spaces/parens inside the quotes.
+    return re.sub(r"\\([ ,()\[\]])", r"\1", raw)
+
+
+def _resolve_cli_path(raw: str | None) -> Path | None:
+    normalized = _normalize_cli_path_arg(raw)
+    if normalized is None:
+        return None
+    return Path(normalized).expanduser().resolve()
+
+
+def _require_existing_path(path: Path, *, label: str) -> None:
+    if not path.exists():
+        raise FileNotFoundError(f"{label} not found: {path}")
+
+
+def _prompt_for_path(prompt: str) -> str:
+    value = input(prompt).strip()
+    if not value:
+        raise ValueError("A path is required.")
+    return value
 
 
 def _print_friendly_error(exc: Exception, args: argparse.Namespace) -> None:
@@ -166,6 +178,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Sample only the first N pages per PDF during retry runs.",
     )
 
+    unified_cmd = sub.add_parser(
+        "unified-export",
+        help="Create one unified text file from .msg and .pdf files in a source folder.",
+    )
+    unified_cmd.add_argument("--input", help="Input folder or file (.msg/.pdf). If omitted, prompts interactively.")
+    unified_cmd.add_argument("--out", help="Output text file path (default: <input-folder>/unified_case_export.txt)")
+    unified_cmd.add_argument("--skip-ocr", action="store_true", help="Use text layer only for PDFs (faster).")
+
     return parser
 
 
@@ -175,9 +195,13 @@ def main() -> None:
 
     try:
         if args.command == "export-mbox":
+            mbox_path = _resolve_cli_path(args.mbox)
+            if mbox_path is None:
+                raise ValueError("--mbox is required")
+            _require_existing_path(mbox_path, label="Mbox")
             result = export_mbox_review_package(
-                mbox=_normalize_cli_path_arg(args.mbox) or args.mbox,
-                out_dir=_normalize_cli_path_arg(args.out_dir),
+                mbox=str(mbox_path),
+                out_dir=str(_resolve_cli_path(args.out_dir)) if args.out_dir else None,
                 name=args.name,
                 keep_attachments=args.keep_attachments,
                 keep_artifacts=args.keep_artifacts,
@@ -188,10 +212,14 @@ def main() -> None:
             return
 
         if args.command == "pdf-ingest":
+            input_path = _resolve_cli_path(args.input)
+            if input_path is None:
+                raise ValueError("--input is required")
+            _require_existing_path(input_path, label="Input")
             result = run_pdf_ingest(
-                input_path=_normalize_cli_path_arg(args.input) or args.input,
+                input_path=str(input_path),
                 profile=args.profile,
-                out_dir=_normalize_cli_path_arg(args.out_dir),
+                out_dir=str(_resolve_cli_path(args.out_dir)) if args.out_dir else None,
                 workers=args.workers,
                 ocr_jobs=args.ocr_jobs,
                 ocr_timeout=args.ocr_timeout,
@@ -206,15 +234,42 @@ def main() -> None:
             return
 
         if args.command == "pdf-retry":
+            from_csv = _resolve_cli_path(args.from_csv)
+            if from_csv is None:
+                raise ValueError("--from-csv is required")
+            _require_existing_path(from_csv, label="CSV")
             statuses = [s.strip() for s in args.status.split(",") if s.strip()]
             result = run_pdf_retry(
-                from_csv=_normalize_cli_path_arg(args.from_csv) or args.from_csv,
+                from_csv=str(from_csv),
                 statuses=statuses,
                 profile=args.profile,
-                out_dir=_normalize_cli_path_arg(args.out_dir),
+                out_dir=str(_resolve_cli_path(args.out_dir)) if args.out_dir else None,
                 ocr_jobs=args.ocr_jobs,
                 ocr_timeout=args.ocr_timeout,
                 max_pages=args.max_pages,
+            )
+            print(json.dumps(result, indent=2, ensure_ascii=False))
+            return
+
+        if args.command == "unified-export":
+            input_raw = args.input or _prompt_for_path("Path to source folder or file (.msg/.pdf): ")
+            input_path = _resolve_cli_path(input_raw)
+            if input_path is None:
+                raise ValueError("Input path is required.")
+            _require_existing_path(input_path, label="Input")
+            if args.out:
+                out_path = _resolve_cli_path(args.out)
+                if out_path is None:
+                    raise ValueError("Output path is required.")
+            else:
+                base_dir = input_path if input_path.is_dir() else input_path.parent
+                out_path = base_dir / "unified_case_export.txt"
+                print(f"Output path not provided. Using default: {out_path}")
+
+            result = run_unified_export(
+                input_path=str(input_path),
+                out_path=str(out_path),
+                skip_ocr=args.skip_ocr,
             )
             print(json.dumps(result, indent=2, ensure_ascii=False))
             return

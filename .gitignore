@@ -38,3 +38,6 @@ output/
 # Local integration matrix configs (machine/user specific paths)
 tests/integration_pdf_matrix.local.yaml
 tests/integration_pdf_matrix.local.yml
+
+# Local downloaded public fixtures (not committed)
+tests/fixtures_local/

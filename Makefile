@@ -29,7 +29,7 @@ TEST_SCOPE ?= all
 INTEGRATION_CONFIG ?= tests/integration_pdf_matrix.local.yaml
 STRICT_INTEGRATION ?= 0
 
-.PHONY: help install run-all extract-archives create-mbox create-pdf-mbox generate-reports filter-emails list-emails complete-inventory export-mbox test test-all test-unit test-integration test-real-integration test-mbox-export test-cli integration-matrix integration-init-yaml bench only-integration only-unit venv install-cli install-cli-user install-cli-pipx cli-help cli-smoke ocr-bench
+.PHONY: help install run-all extract-archives create-mbox create-pdf-mbox generate-reports filter-emails list-emails complete-inventory export-mbox unified-export fixtures-hard-pdf-fetch fixtures-hard-pdf-list test test-all test-unit test-integration test-real-integration test-mbox-export test-cli test-unified-export test-unified-acceptance unified-export-e2e integration-matrix integration-init-yaml bench only-integration only-unit venv install-cli install-cli-user install-cli-pipx cli-help cli-smoke ocr-bench
 
 help:
 	@echo ""
@@ -47,10 +47,16 @@ help:
 	@echo "  make list-emails            Step 4 helper: list sender/recipient values"
 	@echo "  make complete-inventory     Generate complete file inventory"
 	@echo "  make export-mbox            Step 5: raw .mbox -> single review zip"
+	@echo "  make unified-export         Unified .msg + .pdf -> one text file (prompts for input)"
+	@echo "  make unified-export-e2e INPUT=/path Validate unified-export invariants on real files"
+	@echo "  make fixtures-hard-pdf-fetch Download small hard-PDF fixtures into tests/fixtures_local/"
+	@echo "  make fixtures-hard-pdf-list  Show fixture source catalog"
 	@echo ""
 	@echo "Testing"
 	@echo "  make test                   Exhaustive local tests (unit + integration harness)"
 	@echo "  make test-unit              Run unit-focused tests only"
+	@echo "  make test-unified-export    Run unified-export unit tests"
+	@echo "  make test-unified-acceptance Run unified-import acceptance matrix"
 	@echo "  make test-integration       Run integration-focused tests only"
 	@echo "  make TEST_SCOPE=unit|integration|all test"
 	@echo "  make test-real-integration INTEGRATION_CONFIG=tests/integration_pdf_matrix.local.yaml"
@@ -123,6 +129,25 @@ export-mbox:
 	$(if $(filter 1 true TRUE yes YES,$(KEEP_ARTIFACTS)),--keep-artifacts,) \
 	$(if $(filter 1 true TRUE yes YES,$(FORCE)),--force,)
 
+unified-export:
+	PYTHONPATH=src $(PYTHON) -m legal_email_converter unified-export
+
+fixtures-hard-pdf-fetch:
+	PYTHONPATH=src $(PYTHON) scripts/fetch_hard_pdf_fixtures.py
+
+fixtures-hard-pdf-list:
+	@cat tests/hard_pdf_sources.tsv
+
+unified-export-e2e:
+	@if [ -z "$(INPUT)" ]; then \
+		echo "Usage: make unified-export-e2e INPUT=\"/path/to/folder-or-file\" [OUT=\"/path/to/out.txt\"] [SKIP_OCR=1]"; \
+		exit 2; \
+	fi
+	PYTHONPATH=src $(PYTHON) scripts/run_unified_export_e2e.py \
+		--input "$(INPUT)" \
+		$(if $(OUT),--out "$(OUT)",) \
+		$(if $(filter 1 true TRUE yes YES,$(SKIP_OCR)),--skip-ocr,)
+
 test:
 	@set -e; \
 	scope="$(TEST_SCOPE)"; \
@@ -148,7 +173,13 @@ test-pdf-ingest:
 test-cli:
 	$(PYTHON) -m unittest tests/test_cli.py -v
 
-test-unit: test-mbox-export test-cli
+test-unified-export:
+	$(PYTHON) -m unittest tests/test_unified_export.py -v
+
+test-unified-acceptance:
+	$(PYTHON) -m unittest tests/test_unified_import_acceptance.py -v
+
+test-unit: test-mbox-export test-cli test-unified-export test-unified-acceptance
 
 test-integration: test-pdf-ingest
 	@set -e; \

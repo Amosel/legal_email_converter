@@ -148,6 +148,15 @@ make filter-emails SENDER=bob@company.com RECIPIENT=sarah@client.com
 
 # Export raw mbox -> single zip package
 make export-mbox MBOX="/path/to/mailbox.mbox/mbox" SKIP_OCR=1 FORCE=1
+
+# Unified export (.msg + .pdf) -> one text file (interactive)
+make unified-export
+
+# Download lean public hard-PDF fixture set (local, ignored)
+make fixtures-hard-pdf-fetch
+
+# Run unified-export E2E checker on a target folder
+make unified-export-e2e INPUT="/path/to/folder-or-file" SKIP_OCR=1
 ```
 
 Variables:
@@ -232,6 +241,27 @@ legal-email-converter export-mbox \
   --out-dir "/path/to/output" \
   --name mailbox_review_package \
   --force
+```
+
+### Unified Text Export
+
+Create one deterministic text file from mixed `.msg` and `.pdf` inputs:
+
+```bash
+legal-email-converter unified-export --input "/path/to/case-folder"
+```
+
+Behavior:
+- If `--input` is omitted, CLI prompts and validates the path exists.
+- If `--out` is omitted, default output is in the same folder as the input:
+  - folder input: `/path/to/case-folder/unified_case_export.txt`
+  - file input: `/path/to/file-parent/unified_case_export.txt`
+- Paths are normalized consistently across commands (including unescaping `\ ` from quoted shell paths).
+
+Optional:
+
+```bash
+legal-email-converter unified-export --input "/path/to/case-folder" --out "/path/to/out.txt" --skip-ocr
 ```
 
 ## PDF Ingest User Journeys

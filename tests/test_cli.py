@@ -63,7 +63,40 @@ class CliTests(unittest.TestCase):
                 return_value={"status": "ok"},
             ) as ingest_mock, contextlib.redirect_stdout(out):
                 cli.main()
-            self.assertEqual(ingest_mock.call_args.kwargs["input_path"], str(pdf))
+            self.assertEqual(Path(ingest_mock.call_args.kwargs["input_path"]), pdf.resolve())
+
+    def test_unified_export_prompts_for_input_and_defaults_output_to_same_folder(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "case folder"
+            source.mkdir(parents=True, exist_ok=True)
+
+            argv = ["legal-email-converter", "unified-export"]
+            out = io.StringIO()
+            with mock.patch.object(sys, "argv", argv), mock.patch(
+                "builtins.input", return_value=str(source)
+            ), mock.patch.object(
+                cli,
+                "run_unified_export",
+                return_value={"status": "ok"},
+            ) as unified_mock, contextlib.redirect_stdout(out):
+                cli.main()
+
+            kwargs = unified_mock.call_args.kwargs
+            self.assertEqual(Path(kwargs["input_path"]), source.resolve())
+            self.assertEqual(Path(kwargs["out_path"]), (source / "unified_case_export.txt").resolve())
+            self.assertIn("Output path not provided. Using default:", out.getvalue())
+
+    def test_unified_export_with_invalid_prompted_input_fails(self):
+        argv = ["legal-email-converter", "unified-export"]
+        err = io.StringIO()
+        with mock.patch.object(sys, "argv", argv), mock.patch("builtins.input", return_value=""), contextlib.redirect_stderr(
+            err
+        ):
+            with self.assertRaises(SystemExit) as cm:
+                cli.main()
+        self.assertEqual(cm.exception.code, 2)
+        self.assertIn("A path is required.", err.getvalue())
 
 
 if __name__ == "__main__":

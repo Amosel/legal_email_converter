@@ -1,0 +1,9 @@
+# id\turl\ttags
+sample_ocr_wikimedia	https://commons.wikimedia.org/wiki/Special:FilePath/Sample_OCR.pdf	wikimedia,small,ocr
+ocrmypdf_skew	https://raw.githubusercontent.com/ocrmypdf/OCRmyPDF/main/tests/resources/skew.pdf	ocrmypdf,skew
+ocrmypdf_graph_ocred	https://raw.githubusercontent.com/ocrmypdf/OCRmyPDF/main/tests/resources/graph_ocred.pdf	ocrmypdf,graph,ocr
+ocrmypdf_jbig2	https://raw.githubusercontent.com/ocrmypdf/OCRmyPDF/main/tests/resources/jbig2.pdf	ocrmypdf,compression
+ocrmypdf_rotated_skew	https://raw.githubusercontent.com/ocrmypdf/OCRmyPDF/main/tests/resources/rotated_skew.pdf	ocrmypdf,skew,rotation
+ocrmypdf_invalid	https://raw.githubusercontent.com/ocrmypdf/OCRmyPDF/main/tests/resources/invalid.pdf	ocrmypdf,corrupt
+ocrmypdf_vector	https://raw.githubusercontent.com/ocrmypdf/OCRmyPDF/main/tests/resources/vector.pdf	ocrmypdf,vector
+tesseract_at_1995	https://tesseract-ocr.github.io/docs/AT-1995.pdf	tesseract,benchmark
