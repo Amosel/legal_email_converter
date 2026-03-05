@@ -54,7 +54,7 @@ Status legend: `[ ]` pending, `[x]` passed.
 
 ## P2 Delight and Polish
 
-- [ ] Optional rich progress mode (compact table or spinner + counters).
+- [x] Optional rich progress mode (compact table or spinner + counters).
 - [x] Suggested next command shown automatically:
   - e.g. retry failed files.
 - [x] Run manifests include concise audit trail metadata.
@@ -74,3 +74,8 @@ Status legend: `[ ]` pending, `[x]` passed.
 - [x] All P0 items passed.
 - [x] At least 80% of P1 items passed.
 - [x] No critical UX regressions in test suite.
+
+## Large/Hard PDF Companion
+
+- Use `LARGE_PDF_UX_ACCEPTANCE.md` for first-25/50/150-page sampling flows,
+  escalation rules, and benchmark matrix on very large or difficult PDFs.

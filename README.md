@@ -36,34 +36,18 @@ legal_email_converter/
 
 ## Setup
 
-### 1. Install Python Dependencies
+### 1. Install CLI
 
-Create a virtual environment (recommended):
+From repository root (`~/dev/projects/legal_email_converter`):
 ```bash
-cd ~/Desktop/legal_email_converter
-python3 -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-pip install -r requirements.txt
+make install
 ```
 
-Or install globally:
-```bash
-pip3 install extract-msg
-```
+Install behavior:
+- Uses `pipx` when available (global command: `legal-email-converter`)
+- Falls back to local `.venv` install when `pipx` is missing
 
-### 1b. Install As Self-Contained CLI
-
-From this repository root:
-```bash
-pip install .
-```
-
-Then run:
-```bash
-legal-email-converter --help
-```
-
-Offline-friendly Make flow:
+Local-only/offline-friendly flow:
 ```bash
 make install-cli
 make cli-help
@@ -118,7 +102,7 @@ make export-mbox MBOX="/path/to/mailbox.mbox/mbox" OUT_DIR="/path/to/output"
 
 ## Testing
 
-Run the wired unit tests for mbox-to-LLM export:
+Run the test suite:
 
 ```bash
 make test
@@ -134,6 +118,23 @@ Show all make commands:
 
 ```bash
 make help
+```
+
+Integration matrix (real PDFs, expectation-driven):
+
+```bash
+make integration-init-yaml
+# edit paths/expectations in tests/integration_pdf_matrix.local.yaml
+make integration-matrix
+```
+
+Test scopes:
+
+```bash
+make test                       # exhaustive: unit + integration harness (+ real matrix if local config exists)
+make test-unit                  # unit-focused
+make test-integration           # integration-focused
+make TEST_SCOPE=integration STRICT_INTEGRATION=1 test  # fail if local integration config is missing
 ```
 
 ### Make Quick Reference
@@ -245,6 +246,37 @@ Expected:
 - Runs `balanced` by default.
 - Produces `quality_report.csv`, `failed_files.json`, `manifest.json`.
 - Prints a retry command automatically if any failures or bad OCR are detected.
+
+Optional richer progress view:
+
+```bash
+legal-email-converter pdf-ingest --input "/path/to/pdf-or-folder" --progress-style rich
+```
+
+- Uses a compact spinner + counters in interactive terminals.
+- Automatically falls back to plain progress lines when output is non-interactive.
+
+Summary-only output (for logs/automation):
+
+```bash
+legal-email-converter pdf-ingest --input "/path/to/pdf-or-folder" --quiet --no-color
+```
+
+- Suppresses startup/progress noise and prints final summary, run health, artifacts, and next step.
+- `Run health` values: `PASS` (no quality flags), `WARN` (low_text/likely_bad_ocr present), `FAIL` (any failed files).
+- `kpi_runs.csv` is appended in the output directory for trend tracking across runs.
+
+Large PDF sampling (first pages only):
+
+```bash
+legal-email-converter pdf-ingest --input "/path/to/large.pdf" --profile balanced --max-pages 25
+legal-email-converter pdf-ingest --input "/path/to/large.pdf" --profile balanced --max-pages 50
+legal-email-converter pdf-ingest --input "/path/to/large.pdf" --profile balanced --max-pages 150
+```
+
+- Useful for fast first-pass triage on very large/hard PDFs.
+- Sampling applies to both text-layer extraction and OCR paths.
+- See `LARGE_PDF_UX_ACCEPTANCE.md` for full benchmark and escalation flow.
 
 ### 2) Quality-first pass (max coverage)
 

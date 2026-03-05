@@ -2,9 +2,51 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
+import sys
+from pathlib import Path
 
 from .export_mbox_for_llm import export_mbox_review_package
 from .pdf_ingest import run_pdf_ingest, run_pdf_retry
+
+
+def _normalize_cli_path_arg(raw: str | None) -> str | None:
+    if raw is None:
+        return None
+    if "\\" not in raw:
+        return raw
+    original = Path(raw).expanduser()
+    if original.exists():
+        return raw
+    # Users often quote a path and also escape spaces; unescape common shell escapes.
+    candidate = re.sub(r"\\([ ,()\[\]])", r"\1", raw)
+    if Path(candidate).expanduser().exists():
+        return candidate
+    return raw
+
+
+def _print_friendly_error(exc: Exception, args: argparse.Namespace) -> None:
+    print(f"Error: {exc}", file=sys.stderr)
+    print("What it means: the command could not complete with the provided inputs.", file=sys.stderr)
+    print("What to do next:", file=sys.stderr)
+    if isinstance(exc, FileNotFoundError):
+        print("- Verify the path exists and is readable.", file=sys.stderr)
+        maybe_input = getattr(args, "input", None)
+        maybe_csv = getattr(args, "from_csv", None)
+        if (isinstance(maybe_input, str) and "\\ " in maybe_input) or (
+            isinstance(maybe_csv, str) and "\\ " in maybe_csv
+        ):
+            print(
+                "- If the path is quoted, do not escape spaces inside the quotes "
+                '(use "/path/with spaces/file.pdf", not "/path/with\\ spaces/file.pdf").',
+                file=sys.stderr,
+            )
+    elif isinstance(exc, ValueError):
+        print("- Check flag values with: legal-email-converter <command> --help", file=sys.stderr)
+    elif isinstance(exc, RuntimeError):
+        print("- Resolve preflight/dependency issues shown above and retry.", file=sys.stderr)
+    else:
+        print("- Re-run with valid paths/flags. If this persists, report the command and error.", file=sys.stderr)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -62,14 +104,40 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     ingest_cmd.add_argument("--out-dir", help="Output directory for reports/artifacts")
-    ingest_cmd.add_argument("--workers", type=int, default=1, help="Parallel worker count")
+    ingest_cmd.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        help="Reserved for future parallel processing (current implementation runs sequentially).",
+    )
     ingest_cmd.add_argument("--ocr-jobs", type=int, default=2, help="ocrmypdf --jobs value")
     ingest_cmd.add_argument("--ocr-timeout", type=int, default=1200, help="OCR timeout seconds per file")
+    ingest_cmd.add_argument(
+        "--max-pages",
+        type=int,
+        help="Sample only the first N pages per PDF (for example: 25, 50, 150).",
+    )
     ingest_cmd.add_argument(
         "--progress-every",
         type=int,
         default=5,
         help="Print progress every N files (default: 5)",
+    )
+    ingest_cmd.add_argument(
+        "--progress-style",
+        choices=["plain", "rich"],
+        default="plain",
+        help="Progress display mode: plain log lines or rich compact spinner+counters.",
+    )
+    ingest_cmd.add_argument(
+        "--quiet",
+        action="store_true",
+        help="Summary-only output (suppresses preflight and progress logs).",
+    )
+    ingest_cmd.add_argument(
+        "--no-color",
+        action="store_true",
+        help="Disable ANSI colors in terminal output.",
     )
     ingest_cmd.add_argument("--resume", help="Resume run_id from existing state")
 
@@ -92,6 +160,11 @@ def build_parser() -> argparse.ArgumentParser:
     retry_cmd.add_argument("--out-dir", help="Output directory for retry results")
     retry_cmd.add_argument("--ocr-jobs", type=int, default=2, help="ocrmypdf --jobs value")
     retry_cmd.add_argument("--ocr-timeout", type=int, default=1200, help="OCR timeout seconds per file")
+    retry_cmd.add_argument(
+        "--max-pages",
+        type=int,
+        help="Sample only the first N pages per PDF during retry runs.",
+    )
 
     return parser
 
@@ -100,47 +173,56 @@ def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
 
-    if args.command == "export-mbox":
-        result = export_mbox_review_package(
-            mbox=args.mbox,
-            out_dir=args.out_dir,
-            name=args.name,
-            keep_attachments=args.keep_attachments,
-            keep_artifacts=args.keep_artifacts,
-            force=args.force,
-            skip_ocr=args.skip_ocr,
-        )
-        print(json.dumps(result, indent=2, ensure_ascii=False))
-        return
+    try:
+        if args.command == "export-mbox":
+            result = export_mbox_review_package(
+                mbox=_normalize_cli_path_arg(args.mbox) or args.mbox,
+                out_dir=_normalize_cli_path_arg(args.out_dir),
+                name=args.name,
+                keep_attachments=args.keep_attachments,
+                keep_artifacts=args.keep_artifacts,
+                force=args.force,
+                skip_ocr=args.skip_ocr,
+            )
+            print(json.dumps(result, indent=2, ensure_ascii=False))
+            return
 
-    if args.command == "pdf-ingest":
-        result = run_pdf_ingest(
-            input_path=args.input,
-            profile=args.profile,
-            out_dir=args.out_dir,
-            workers=args.workers,
-            ocr_jobs=args.ocr_jobs,
-            ocr_timeout=args.ocr_timeout,
-            progress_every=args.progress_every,
-            resume_run_id=args.resume,
-        )
-        print(json.dumps(result, indent=2, ensure_ascii=False))
-        return
+        if args.command == "pdf-ingest":
+            result = run_pdf_ingest(
+                input_path=_normalize_cli_path_arg(args.input) or args.input,
+                profile=args.profile,
+                out_dir=_normalize_cli_path_arg(args.out_dir),
+                workers=args.workers,
+                ocr_jobs=args.ocr_jobs,
+                ocr_timeout=args.ocr_timeout,
+                max_pages=args.max_pages,
+                progress_every=args.progress_every,
+                progress_style=args.progress_style,
+                quiet=args.quiet,
+                no_color=args.no_color,
+                resume_run_id=args.resume,
+            )
+            print(json.dumps(result, indent=2, ensure_ascii=False))
+            return
 
-    if args.command == "pdf-retry":
-        statuses = [s.strip() for s in args.status.split(",") if s.strip()]
-        result = run_pdf_retry(
-            from_csv=args.from_csv,
-            statuses=statuses,
-            profile=args.profile,
-            out_dir=args.out_dir,
-            ocr_jobs=args.ocr_jobs,
-            ocr_timeout=args.ocr_timeout,
-        )
-        print(json.dumps(result, indent=2, ensure_ascii=False))
-        return
+        if args.command == "pdf-retry":
+            statuses = [s.strip() for s in args.status.split(",") if s.strip()]
+            result = run_pdf_retry(
+                from_csv=_normalize_cli_path_arg(args.from_csv) or args.from_csv,
+                statuses=statuses,
+                profile=args.profile,
+                out_dir=_normalize_cli_path_arg(args.out_dir),
+                ocr_jobs=args.ocr_jobs,
+                ocr_timeout=args.ocr_timeout,
+                max_pages=args.max_pages,
+            )
+            print(json.dumps(result, indent=2, ensure_ascii=False))
+            return
 
-    parser.error(f"Unknown command: {args.command}")
+        parser.error(f"Unknown command: {args.command}")
+    except (FileNotFoundError, ValueError, RuntimeError) as exc:
+        _print_friendly_error(exc, args)
+        raise SystemExit(2) from None
 
 
 if __name__ == "__main__":

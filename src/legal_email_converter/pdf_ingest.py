@@ -4,6 +4,7 @@ import csv
 import json
 import shutil
 import subprocess
+import sys
 import time
 from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
@@ -16,6 +17,7 @@ STATUS_ORDER = {
     "low_text": 2,
     "good": 3,
 }
+SPINNER_FRAMES = ("|", "/", "-", "\\")
 
 
 @dataclass
@@ -78,9 +80,17 @@ def _pdf_page_count(pdf_path: Path) -> int:
 
 
 def _extract_pdftotext(pdf_path: Path) -> str:
+    return _extract_pdftotext_range(pdf_path, max_pages=None)
+
+
+def _extract_pdftotext_range(pdf_path: Path, *, max_pages: int | None) -> str:
     try:
+        cmd = ["pdftotext"]
+        if max_pages and max_pages > 0:
+            cmd.extend(["-f", "1", "-l", str(max_pages)])
+        cmd.extend([str(pdf_path), "-"])
         result = subprocess.run(
-            ["pdftotext", str(pdf_path), "-"],
+            cmd,
             capture_output=True,
             text=True,
             timeout=90,
@@ -98,10 +108,15 @@ def _extract_ocr(
     *,
     ocr_jobs: int,
     ocr_timeout: int,
+    max_pages: int | None = None,
 ) -> tuple[str, str]:
     try:
+        cmd = ["ocrmypdf", "--force-ocr", "--jobs", str(ocr_jobs)]
+        if max_pages and max_pages > 0:
+            cmd.extend(["--pages", f"1-{max_pages}"])
+        cmd.extend([str(pdf_path), str(ocr_output_pdf)])
         result = subprocess.run(
-            ["ocrmypdf", "--force-ocr", "--jobs", str(ocr_jobs), str(pdf_path), str(ocr_output_pdf)],
+            cmd,
             capture_output=True,
             text=True,
             timeout=ocr_timeout,
@@ -109,7 +124,7 @@ def _extract_ocr(
         if result.returncode != 0:
             err = (result.stderr or "").strip()
             return "", err or f"ocrmypdf failed with exit code {result.returncode}"
-        text = _extract_pdftotext(ocr_output_pdf)
+        text = _extract_pdftotext_range(ocr_output_pdf, max_pages=max_pages)
         return text, ""
     except subprocess.TimeoutExpired:
         return "", f"OCR timed out after {ocr_timeout}s"
@@ -137,6 +152,117 @@ def _print_progress(done: int, total: int, start: float, mode: str, current: str
         f"Progress: {done}/{total} | mode={mode} | current={current} | "
         f"ETA={eta}s | avg={avg:.1f}s/file"
     )
+
+
+def _colorize(text: str, ansi_code: str, enabled: bool) -> str:
+    if not enabled:
+        return text
+    return f"\033[{ansi_code}m{text}\033[0m"
+
+
+def _compute_run_health(summary: dict[str, int]) -> str:
+    if summary.get("failed", 0) > 0:
+        return "FAIL"
+    if summary.get("likely_bad_ocr", 0) > 0 or summary.get("low_text", 0) > 0:
+        return "WARN"
+    return "PASS"
+
+
+def _compute_kpis(
+    *,
+    summary: dict[str, int],
+    file_count: int,
+    duration_seconds: float,
+) -> dict[str, float | int | str]:
+    total = max(file_count, 1)
+    health = _compute_run_health(summary)
+    decision_ready_rate = 1.0 if health == "PASS" else 0.0
+    failed_rate = summary.get("failed", 0) / total
+    warn_rate = (summary.get("low_text", 0) + summary.get("likely_bad_ocr", 0)) / total
+    return {
+        "north_star_tto_seconds": round(duration_seconds, 2),
+        "run_health": health,
+        "decision_ready_rate": round(decision_ready_rate, 4),
+        "failed_rate": round(failed_rate, 4),
+        "warn_rate": round(warn_rate, 4),
+        "file_count": file_count,
+    }
+
+
+def _append_kpi_log(
+    *,
+    out_dir: Path,
+    run_id: str,
+    profile: str,
+    input_path: str,
+    max_pages: int | None,
+    kpis: dict[str, float | int | str],
+) -> Path:
+    path = out_dir / "kpi_runs.csv"
+    write_header = not path.exists()
+    with path.open("a", encoding="utf-8", newline="") as f:
+        w = csv.writer(f)
+        if write_header:
+            w.writerow(
+                [
+                    "run_id",
+                    "created_at_utc",
+                    "profile",
+                    "input_path",
+                    "max_pages",
+                    "file_count",
+                    "run_health",
+                    "north_star_tto_seconds",
+                    "decision_ready_rate",
+                    "warn_rate",
+                    "failed_rate",
+                ]
+            )
+        w.writerow(
+            [
+                run_id,
+                datetime.now(timezone.utc).isoformat(),
+                profile,
+                input_path,
+                max_pages if max_pages is not None else "",
+                kpis["file_count"],
+                kpis["run_health"],
+                kpis["north_star_tto_seconds"],
+                kpis["decision_ready_rate"],
+                kpis["warn_rate"],
+                kpis["failed_rate"],
+            ]
+        )
+    return path
+
+
+def _print_progress_rich(
+    *,
+    done: int,
+    total: int,
+    start: float,
+    mode: str,
+    current: str,
+    summary: dict[str, int],
+    use_color: bool,
+    final: bool = False,
+) -> None:
+    elapsed = max(time.time() - start, 0.001)
+    rate = done / elapsed
+    remaining = total - done
+    eta = int(remaining / rate) if rate > 0 else 0
+    avg = elapsed / done if done > 0 else 0.0
+    spinner = _colorize(SPINNER_FRAMES[done % len(SPINNER_FRAMES)], "36", use_color)
+    current_short = current if len(current) <= 30 else f"...{current[-27:]}"
+    line = (
+        f"\r{spinner} {done}/{total} {mode:<10} "
+        f"{_colorize('g', '32', use_color)}:{summary.get('good', 0)} "
+        f"{_colorize('l', '33', use_color)}:{summary.get('low_text', 0)} "
+        f"{_colorize('b', '35', use_color)}:{summary.get('likely_bad_ocr', 0)} "
+        f"{_colorize('f', '31', use_color)}:{summary.get('failed', 0)} "
+        f"ETA:{eta:>4}s avg:{avg:>4.1f}s {current_short}"
+    )
+    print(line, end="\n" if final else "", flush=True)
 
 
 def _write_state_line(state_file: Path, run_id: str, result: PdfResult) -> None:
@@ -224,12 +350,12 @@ def _write_manifest(
     profile: str,
     input_path: str,
     results: list[PdfResult],
+    summary: dict[str, int],
+    kpis: dict[str, float | int | str],
     quality_csv: Path,
     failed_json: Path,
+    kpi_csv: Path,
 ) -> Path:
-    summary = {"good": 0, "low_text": 0, "likely_bad_ocr": 0, "failed": 0}
-    for r in results:
-        summary[r.status] = summary.get(r.status, 0) + 1
     manifest = {
         "run_id": run_id,
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
@@ -237,8 +363,10 @@ def _write_manifest(
         "input_path": input_path,
         "file_count": len(results),
         "summary": summary,
+        "kpis": kpis,
         "quality_report_csv": str(quality_csv),
         "failed_files_json": str(failed_json),
+        "kpi_runs_csv": str(kpi_csv),
         "results": [asdict(r) for r in results],
     }
     manifest_path = out_dir / "manifest.json"
@@ -255,12 +383,24 @@ def run_pdf_ingest(
     ocr_jobs: int = 2,
     ocr_timeout: int = 1200,
     progress_every: int = 5,
+    progress_style: str = "plain",
+    quiet: bool = False,
+    no_color: bool = False,
+    max_pages: int | None = None,
     resume_run_id: str | None = None,
     selected_files: list[str] | None = None,
 ) -> dict[str, object]:
     if profile not in {"quick", "balanced", "thorough"}:
         raise ValueError("profile must be one of: quick, balanced, thorough")
-    print("Preflight: checking dependencies and filesystem access...")
+    if progress_style not in {"plain", "rich"}:
+        raise ValueError("progress_style must be one of: plain, rich")
+    if max_pages is not None and max_pages < 1:
+        raise ValueError("max_pages must be >= 1 when provided")
+    def emit(message: str, *, always: bool = False) -> None:
+        if always or not quiet:
+            print(message)
+
+    emit("Preflight: checking dependencies and filesystem access...")
     issues = run_preflight(profile=profile)
     if issues:
         raise RuntimeError("Preflight failed:\n" + "\n".join(f"- {x}" for x in issues))
@@ -289,9 +429,21 @@ def run_pdf_ingest(
         }
 
     progress_every = max(1, progress_every)
-    print(f"Found {total} PDF(s) to process | profile={profile} | workers={workers} | ocr_jobs={ocr_jobs}")
-    print("What happened: starting extraction with automatic quality checks.")
+    if workers != 1:
+        emit(
+            "What it means: --workers is reserved for future parallel execution; "
+            "this run processes files sequentially."
+        )
+    rich_enabled = progress_style == "rich" and sys.stdout.isatty()
+    use_color = (not no_color) and sys.stdout.isatty()
+    if progress_style == "rich" and not rich_enabled:
+        emit("Progress style: rich requested, falling back to plain (non-interactive output stream).")
+    emit(f"Found {total} PDF(s) to process | profile={profile} | workers={workers} | ocr_jobs={ocr_jobs}")
+    emit("What happened: starting extraction with automatic quality checks.")
+    if max_pages:
+        emit(f"What happened: sampling first {max_pages} page(s) per PDF for this run.")
     results: list[PdfResult] = []
+    running_summary = {"good": 0, "low_text": 0, "likely_bad_ocr": 0, "failed": 0}
     started = time.time()
     temp_dir = resolved_out / ".tmp_ocr"
     temp_dir.mkdir(parents=True, exist_ok=True)
@@ -300,12 +452,13 @@ def run_pdf_ingest(
         for idx, pdf in enumerate(files, start=1):
             t0 = time.time()
             pages = _pdf_page_count(pdf)
+            pages_for_scoring = min(pages, max_pages) if max_pages else pages
             mode_used = "text-layer"
             warning = ""
 
-            text = _extract_pdftotext(pdf)
+            text = _extract_pdftotext_range(pdf, max_pages=max_pages)
             chars = len(text)
-            status, cpp, retry_suggested = _classify(chars, pages, mode_used)
+            status, cpp, retry_suggested = _classify(chars, pages_for_scoring, mode_used)
 
             should_ocr = False
             if profile == "thorough":
@@ -316,7 +469,13 @@ def run_pdf_ingest(
             if should_ocr:
                 mode_used = "ocr"
                 ocr_pdf = temp_dir / f"{pdf.stem}_{idx}.ocr.pdf"
-                ocr_text, err = _extract_ocr(pdf, ocr_pdf, ocr_jobs=ocr_jobs, ocr_timeout=ocr_timeout)
+                ocr_text, err = _extract_ocr(
+                    pdf,
+                    ocr_pdf,
+                    ocr_jobs=ocr_jobs,
+                    ocr_timeout=ocr_timeout,
+                    max_pages=max_pages,
+                )
                 if err:
                     status = "failed"
                     warning = err
@@ -330,12 +489,12 @@ def run_pdf_ingest(
                     retry_suggested = True
                 else:
                     chars = len(ocr_text)
-                    status, cpp, retry_suggested = _classify(chars, pages, mode_used)
+                    status, cpp, retry_suggested = _classify(chars, pages_for_scoring, mode_used)
 
             elapsed = time.time() - t0
             result = PdfResult(
                 file_path=str(pdf),
-                pages=pages,
+                pages=pages_for_scoring,
                 mode_used=mode_used,
                 chars_extracted=chars,
                 chars_per_page=cpp,
@@ -345,6 +504,7 @@ def run_pdf_ingest(
                 elapsed_seconds=elapsed,
             )
             results.append(result)
+            running_summary[result.status] = running_summary.get(result.status, 0) + 1
             _write_state_line(state_file, run_id, result)
             should_print = (
                 idx == 1
@@ -354,35 +514,75 @@ def run_pdf_ingest(
                 or status in {"failed", "likely_bad_ocr"}
             )
             if should_print:
-                _print_progress(idx, total, started, mode_used, pdf.name)
+                if rich_enabled and not quiet:
+                    _print_progress_rich(
+                        done=idx,
+                        total=total,
+                        start=started,
+                        mode=mode_used,
+                        current=pdf.name,
+                        summary=running_summary,
+                        use_color=use_color,
+                        final=(idx == total),
+                    )
+                elif not quiet:
+                    _print_progress(idx, total, started, mode_used, pdf.name)
             prev_mode = mode_used
 
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
 
     quality_csv, failed_json = _write_quality_outputs(resolved_out, results)
-    manifest_path = _write_manifest(
-        resolved_out, run_id, profile, str(in_path), results, quality_csv, failed_json
-    )
-
     summary = {"good": 0, "low_text": 0, "likely_bad_ocr": 0, "failed": 0}
     for r in results:
         summary[r.status] = summary.get(r.status, 0) + 1
-    print(
+    duration_seconds = max(time.time() - started, 0.0)
+    kpis = _compute_kpis(summary=summary, file_count=len(results), duration_seconds=duration_seconds)
+    kpi_csv = _append_kpi_log(
+        out_dir=resolved_out,
+        run_id=run_id,
+        profile=profile,
+        input_path=str(in_path),
+        max_pages=max_pages,
+        kpis=kpis,
+    )
+    manifest_path = _write_manifest(
+        resolved_out,
+        run_id,
+        profile,
+        str(in_path),
+        results,
+        summary,
+        kpis,
+        quality_csv,
+        failed_json,
+        kpi_csv,
+    )
+
+    emit(
         f"Completed: {len(results)} files | "
         f"good={summary['good']} low_text={summary['low_text']} "
-        f"likely_bad_ocr={summary['likely_bad_ocr']} failed={summary['failed']}"
+        f"likely_bad_ocr={summary['likely_bad_ocr']} failed={summary['failed']}",
+        always=True,
     )
-    print("What it means: review low_text and likely_bad_ocr rows before downstream use.")
-    print(f"Artifacts: quality_report={quality_csv} | failures={failed_json} | manifest={manifest_path}")
+    health = str(kpis["run_health"])
+    health_label = _colorize(
+        health,
+        "32" if health == "PASS" else ("33" if health == "WARN" else "31"),
+        use_color,
+    )
+    emit(f"Run health: {health_label}", always=True)
+    emit("What it means: review low_text and likely_bad_ocr rows before downstream use.", always=True)
+    emit(f"Artifacts: quality_report={quality_csv} | failures={failed_json} | manifest={manifest_path}", always=True)
     if summary["failed"] > 0 or summary["likely_bad_ocr"] > 0:
-        print(
+        emit(
             "Next step: "
             f"legal-email-converter pdf-retry --from-csv '{quality_csv}' "
-            "--status failed,likely_bad_ocr --profile thorough"
+            "--status failed,likely_bad_ocr --profile thorough",
+            always=True,
         )
     else:
-        print(f"Next step: continue with downstream ingestion using {quality_csv}")
+        emit(f"Next step: continue with downstream ingestion using {quality_csv}", always=True)
 
     return {
         "status": "ok",
@@ -403,6 +603,7 @@ def run_pdf_retry(
     out_dir: str | None = None,
     ocr_jobs: int = 2,
     ocr_timeout: int = 1200,
+    max_pages: int | None = None,
 ) -> dict[str, object]:
     source_csv = Path(from_csv).expanduser().resolve()
     if not source_csv.exists():
@@ -422,5 +623,6 @@ def run_pdf_retry(
         workers=1,
         ocr_jobs=ocr_jobs,
         ocr_timeout=ocr_timeout,
+        max_pages=max_pages,
         selected_files=selected,
     )
