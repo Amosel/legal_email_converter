@@ -6,7 +6,8 @@ Unified import must be deterministic and path-safe:
 - same input tree always yields same document order and count
 - one bad file never aborts the whole import
 - output location defaults are predictable and explicit
-- sorting is explicit (`path` today; `date_signal_then_path` available internally)
+- sorting is explicit (`path`, `date_signal_then_path`, `date_query_then_path`)
+- memory use is bounded by streaming extracted content to temporary artifacts (no full corpus kept in RAM)
 
 ## Acceptance criteria
 
@@ -38,6 +39,10 @@ Unified import must be deterministic and path-safe:
 - document `Path:` fields are relative to input root.
 - `manifest.files[*].relative_path` are relative (no absolute source paths).
 - manifest includes `date_signal` per file and `summary.date_signals` counters.
+- when `date_query_then_path` is used with Ollama:
+  - preflight and error/fallback diagnostics are present under `manifest.date_query`
+  - default behavior falls back to heuristic date signal on Ollama failure
+  - strict mode fails fast instead of fallback
 
 ## Minimal combination matrix (one-file-per-type)
 

@@ -259,14 +259,35 @@ Behavior:
 - Paths are normalized consistently across commands (including unescaping `\ ` from quoted shell paths).
 - Document paths inside output/manifest are relative to the input root.
 - Manifest includes per-file rows: `kind`, `relative_path`, `folder`, `subfolders`, `topic`, `content_chars`, `has_error`.
-- Manifest also includes per-file `date_signal` and `summary.date_signals` (for future query-assisted sorting flag).
-- Internal Ollama client support exists (`/api/generate`, `/api/embed`) for future query-assisted date sorting; not enabled via CLI flag yet.
+- Manifest includes per-file `date_signal`, `summary.date_signals`, and `date_query` diagnostics (preflight/fallback/error counters) when date-query mode is used.
 
 Optional:
 
 ```bash
 legal-email-converter unified-export --input "/path/to/case-folder" --out "/path/to/out.txt" --skip-ocr
+legal-email-converter unified-export --input "/path/to/case-folder" --sort-mode date-signal
+legal-email-converter unified-export --input "/path/to/case-folder" --sort-mode date-query --date-query-provider ollama --ollama-model llama3.2:3b
+legal-email-converter unified-export --input "/path/to/case-folder" --sort-mode date-query --date-query-provider ollama --date-query-strict
 ```
+
+Sorting flags:
+- `--sort-mode path` (default): deterministic lexical path order.
+- `--sort-mode date-signal`: local date inference from metadata/path/content, then path tie-break.
+- `--sort-mode date-query`: query-based date inference, then path tie-break.
+- `--date-query-provider heuristic|ollama`: provider for `date-query` mode.
+- `--date-query-retries N`: retries per file for Ollama query failures (default: `1`).
+- `--date-query-strict`: fail-fast on Ollama preflight/query failures (default behavior is fallback).
+- `--no-date-query-preflight`: skip ping/model preflight (not recommended).
+
+Date-query resilience:
+- Default mode is anti-fragile: Ollama preflight/query failures fall back to deterministic local date-signal inference and the run completes.
+- Strict mode (`--date-query-strict`) converts those failures into hard errors.
+- `manifest.date_query` records preflight status and categorized error/fallback counters.
+
+Memory model:
+- Unified export runs in a two-pass bounded-memory flow:
+  - pass 1 extracts one file at a time and writes temporary content artifacts
+  - pass 2 sorts compact metadata rows and streams final output from temp artifacts
 
 ## PDF Ingest User Journeys
 

@@ -2,12 +2,20 @@ from __future__ import annotations
 
 import json
 import re
+import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
 from .export_mbox_for_llm import extract_pdf_text, extract_pdf_text_with_ocr, normalize_text
-from .ollama_client import OllamaClient, query_date_signal_with_ollama
+from .ollama_client import (
+    OllamaClient,
+    OllamaError,
+    OllamaModelNotFoundError,
+    OllamaProtocolError,
+    OllamaUnavailableError,
+    query_date_signal_with_ollama,
+)
 
 
 SUPPORTED_SUFFIXES = {".msg", ".pdf"}
@@ -104,18 +112,18 @@ def derive_date_signal(doc: UnifiedDoc) -> dict[str, object]:
     return {"value": "", "source": "none", "confidence": 0.0}
 
 
-def _sort_docs(docs: list[UnifiedDoc], *, mode: str, date_signals: dict[str, dict[str, object]]) -> list[UnifiedDoc]:
+def _sort_rows(rows: list[dict[str, object]], *, mode: str) -> list[dict[str, object]]:
     if mode == "path":
-        return sorted(docs, key=lambda d: str(d.path).lower())
+        return sorted(rows, key=lambda r: str(r["relative_path"]).lower())
 
     if mode in {"date_signal_then_path", "date_query_then_path"}:
-        def key(doc: UnifiedDoc) -> tuple[int, str, str]:
-            signal = date_signals[str(doc.path)]
+        def key(row: dict[str, object]) -> tuple[int, str, str]:
+            signal = row.get("date_signal", {})
             value = str(signal.get("value", "") or "")
             unresolved = 1 if not value else 0
-            return (unresolved, value, str(doc.path).lower())
+            return (unresolved, value, str(row["relative_path"]).lower())
 
-        return sorted(docs, key=key)
+        return sorted(rows, key=key)
 
     raise ValueError(f"Unknown sort mode: {mode}")
 
@@ -171,25 +179,27 @@ def _safe_extract(path: Path, *, skip_ocr: bool) -> UnifiedDoc:
         return UnifiedDoc(kind=path.suffix.lower().lstrip(".").upper(), path=path, metadata={}, content="", error=str(exc))
 
 
-def _write_txt(out_path: Path, source: Path, docs: list[UnifiedDoc], *, base_root: Path) -> None:
+def _write_txt(out_path: Path, source: Path, rows: list[dict[str, object]]) -> None:
     with out_path.open("w", encoding="utf-8") as f:
         f.write("# Unified Export\n")
         f.write(f"GeneratedUTC: {datetime.now(timezone.utc).isoformat()}\n")
         f.write(f"Source: {source}\n")
-        f.write(f"DocumentCount: {len(docs)}\n\n")
+        f.write(f"DocumentCount: {len(rows)}\n\n")
 
-        for idx, doc in enumerate(docs, start=1):
-            rel_path = _relative_path(doc.path, base_root=base_root)
+        for idx, row in enumerate(rows, start=1):
+            metadata = row.get("metadata", {})
+            content_file = Path(str(row["content_file"]))
             f.write("=== DOCUMENT START ===\n")
             f.write(f"Index: {idx}\n")
-            f.write(f"Type: {doc.kind}\n")
-            f.write(f"Path: {rel_path}\n")
-            for key, value in doc.metadata.items():
+            f.write(f"Type: {row['kind']}\n")
+            f.write(f"Path: {row['relative_path']}\n")
+            for key, value in metadata.items():
                 f.write(f"{key}: {value}\n")
-            if doc.error:
-                f.write(f"Error: {doc.error}\n")
+            if row.get("error"):
+                f.write(f"Error: {row['error']}\n")
             f.write("--- CONTENT ---\n")
-            f.write((doc.content or "") + "\n")
+            content = content_file.read_text(encoding="utf-8") if content_file.exists() else ""
+            f.write(content + "\n")
             f.write("=== DOCUMENT END ===\n\n")
 
 
@@ -202,6 +212,9 @@ def run_unified_export(
     date_query_provider: str = "heuristic",
     ollama_base_url: str = "http://localhost:11434/api",
     ollama_model: str = "llama3.2:3b",
+    date_query_strict: bool = False,
+    date_query_retries: int = 1,
+    date_query_preflight: bool = True,
 ) -> dict[str, object]:
     if sort_mode not in SORT_MODES:
         raise ValueError(f"sort_mode must be one of: {', '.join(sorted(SORT_MODES))}")
@@ -218,72 +231,165 @@ def run_unified_export(
     out_file = Path(out_path).expanduser().resolve()
     out_file.parent.mkdir(parents=True, exist_ok=True)
 
-    docs = [_safe_extract(path, skip_ocr=skip_ocr) for path in files]
-    if sort_mode == "date_query_then_path":
-        if date_query_provider == "ollama":
-            client = OllamaClient(base_url=ollama_base_url)
-
-            def provider(doc: UnifiedDoc) -> dict[str, object]:
-                return query_date_signal_with_ollama(
-                    client=client,
-                    model=ollama_model,
-                    kind=doc.kind,
-                    relative_path=_relative_path(doc.path, base_root=base_root),
-                    metadata=doc.metadata,
-                    content=doc.content,
-                )
-
-        else:
-            # Keep query mode operational even without external provider.
-            provider = derive_date_signal
-
-        date_signals = {str(doc.path): provider(doc) for doc in docs}
-    else:
-        date_signals = {str(doc.path): derive_date_signal(doc) for doc in docs}
-    docs = _sort_docs(docs, mode=sort_mode, date_signals=date_signals)
-    _write_txt(out_file, in_path, docs, base_root=base_root)
-
     file_rows: list[dict[str, object]] = []
     topic_counts: dict[str, int] = {}
     date_source_counts: dict[str, int] = {}
     failed: list[str] = []
-    for idx, doc in enumerate(docs, start=1):
-        date_signal = date_signals[str(doc.path)]
-        rel_path = _relative_path(doc.path, base_root=base_root)
-        rel_parts = Path(rel_path).parts
-        folder = str(Path(rel_path).parent) if len(rel_parts) > 1 else "Root"
-        subfolders = list(rel_parts[:-1]) if len(rel_parts) > 1 else []
-        topic = _topic_from_relative(rel_path)
-        topic_counts[topic] = topic_counts.get(topic, 0) + 1
-        source = str(date_signal.get("source", "none"))
-        date_source_counts[source] = date_source_counts.get(source, 0) + 1
-        if doc.error:
-            failed.append(rel_path)
-        file_rows.append(
-            {
-                "index": idx,
-                "kind": doc.kind,
-                "relative_path": rel_path,
-                "folder": folder,
-                "subfolders": subfolders,
-                "topic": topic,
-                "content_chars": len(doc.content or ""),
-                "date_signal": date_signal,
-                "has_error": bool(doc.error),
-                "error": doc.error,
-                "metadata": doc.metadata,
-            }
-        )
+    query_diagnostics: dict[str, object] = {
+        "enabled": bool(sort_mode == "date_query_then_path"),
+        "provider": date_query_provider,
+        "strict": bool(date_query_strict),
+        "preflight_enabled": bool(date_query_preflight),
+        "retries": max(0, int(date_query_retries)),
+        "preflight_ok": None,
+        "preflight_error": "",
+        "fallbacks": 0,
+        "invalid_json_fallbacks": 0,
+        "transport_errors": 0,
+        "protocol_errors": 0,
+        "model_not_found_errors": 0,
+        "other_errors": 0,
+    }
+    with tempfile.TemporaryDirectory(prefix="unified_export_") as tmp_dir:
+        artifact_root = Path(tmp_dir)
+        provider = derive_date_signal
+        if sort_mode == "date_query_then_path" and date_query_provider == "ollama":
+            client = OllamaClient(base_url=ollama_base_url)
+            preflight_ok = True
+
+            if date_query_preflight:
+                try:
+                    client.ping()
+                    models = client.list_models()
+                    if models and ollama_model not in models:
+                        raise OllamaModelNotFoundError(
+                            f"Model '{ollama_model}' not found in Ollama tags: {', '.join(models[:10])}"
+                        )
+                except OllamaError as exc:
+                    preflight_ok = False
+                    query_diagnostics["preflight_error"] = str(exc)
+                    if isinstance(exc, OllamaUnavailableError):
+                        query_diagnostics["transport_errors"] = int(query_diagnostics["transport_errors"]) + 1
+                    elif isinstance(exc, OllamaProtocolError):
+                        query_diagnostics["protocol_errors"] = int(query_diagnostics["protocol_errors"]) + 1
+                    elif isinstance(exc, OllamaModelNotFoundError):
+                        query_diagnostics["model_not_found_errors"] = int(
+                            query_diagnostics["model_not_found_errors"]
+                        ) + 1
+                    else:
+                        query_diagnostics["other_errors"] = int(query_diagnostics["other_errors"]) + 1
+
+                    if date_query_strict:
+                        raise RuntimeError(f"Ollama preflight failed: {exc}") from exc
+            query_diagnostics["preflight_ok"] = preflight_ok
+
+            if not preflight_ok and not date_query_strict:
+                provider = derive_date_signal
+            else:
+
+                def provider(doc: UnifiedDoc) -> dict[str, object]:
+                    rel = _relative_path(doc.path, base_root=base_root)
+                    retries = max(0, int(date_query_retries))
+                    for attempt in range(retries + 1):
+                        try:
+                            result = query_date_signal_with_ollama(
+                                client=client,
+                                model=ollama_model,
+                                kind=doc.kind,
+                                relative_path=rel,
+                                metadata=doc.metadata,
+                                content=doc.content,
+                            )
+                            if (
+                                str(result.get("source", "")) == "query.invalid_json"
+                                and not date_query_strict
+                            ):
+                                query_diagnostics["invalid_json_fallbacks"] = int(
+                                    query_diagnostics["invalid_json_fallbacks"]
+                                ) + 1
+                                query_diagnostics["fallbacks"] = int(query_diagnostics["fallbacks"]) + 1
+                                fallback = derive_date_signal(doc)
+                                fallback_source = str(fallback.get("source", "none"))
+                                return {
+                                    **fallback,
+                                    "source": f"fallback.invalid_json.{fallback_source}",
+                                }
+                            return result
+                        except OllamaError as exc:
+                            if isinstance(exc, OllamaUnavailableError):
+                                query_diagnostics["transport_errors"] = int(query_diagnostics["transport_errors"]) + 1
+                            elif isinstance(exc, OllamaProtocolError):
+                                query_diagnostics["protocol_errors"] = int(query_diagnostics["protocol_errors"]) + 1
+                            elif isinstance(exc, OllamaModelNotFoundError):
+                                query_diagnostics["model_not_found_errors"] = int(
+                                    query_diagnostics["model_not_found_errors"]
+                                ) + 1
+                            else:
+                                query_diagnostics["other_errors"] = int(query_diagnostics["other_errors"]) + 1
+
+                            if attempt < retries:
+                                continue
+                            if date_query_strict:
+                                raise RuntimeError(f"Ollama date query failed for '{rel}': {exc}") from exc
+
+                            query_diagnostics["fallbacks"] = int(query_diagnostics["fallbacks"]) + 1
+                            fallback = derive_date_signal(doc)
+                            fallback_source = str(fallback.get("source", "none"))
+                            return {
+                                **fallback,
+                                "source": f"fallback.ollama_error.{fallback_source}",
+                            }
+
+        # Pass 1: extract one file at a time, write content artifact, keep compact index rows in memory.
+        for idx, path in enumerate(files, start=1):
+            doc = _safe_extract(path, skip_ocr=skip_ocr)
+            rel_path = _relative_path(doc.path, base_root=base_root)
+            rel_parts = Path(rel_path).parts
+            folder = str(Path(rel_path).parent) if len(rel_parts) > 1 else "Root"
+            subfolders = list(rel_parts[:-1]) if len(rel_parts) > 1 else []
+            topic = _topic_from_relative(rel_path)
+            date_signal = provider(doc)
+            source = str(date_signal.get("source", "none"))
+
+            content_file = artifact_root / f"{idx:06d}.txt"
+            content_file.write_text(doc.content or "", encoding="utf-8")
+
+            topic_counts[topic] = topic_counts.get(topic, 0) + 1
+            date_source_counts[source] = date_source_counts.get(source, 0) + 1
+            if doc.error:
+                failed.append(rel_path)
+
+            file_rows.append(
+                {
+                    "kind": doc.kind,
+                    "relative_path": rel_path,
+                    "folder": folder,
+                    "subfolders": subfolders,
+                    "topic": topic,
+                    "content_chars": len(doc.content or ""),
+                    "date_signal": date_signal,
+                    "has_error": bool(doc.error),
+                    "error": doc.error,
+                    "metadata": doc.metadata,
+                    "content_file": str(content_file),
+                }
+            )
+
+        # Pass 2: order compact rows and stream content from artifacts to final output.
+        sorted_rows = _sort_rows(file_rows, mode=sort_mode)
+        for index, row in enumerate(sorted_rows, start=1):
+            row["index"] = index
+        _write_txt(out_file, in_path, sorted_rows)
 
     summary = {
-        "total": len(docs),
-        "msg": sum(1 for d in docs if d.kind == "MSG"),
-        "pdf": sum(1 for d in docs if d.kind == "PDF"),
+        "total": len(file_rows),
+        "msg": sum(1 for r in file_rows if r.get("kind") == "MSG"),
+        "pdf": sum(1 for r in file_rows if r.get("kind") == "PDF"),
         "failed": len(failed),
         "topics": topic_counts,
         "date_signals": {
-            "resolved": sum(1 for d in docs if date_signals[str(d.path)].get("value")),
-            "unresolved": sum(1 for d in docs if not date_signals[str(d.path)].get("value")),
+            "resolved": sum(1 for r in file_rows if str(r.get("date_signal", {}).get("value", "")).strip()),
+            "unresolved": sum(1 for r in file_rows if not str(r.get("date_signal", {}).get("value", "")).strip()),
             "by_source": date_source_counts,
         },
     }
@@ -293,9 +399,12 @@ def run_unified_export(
         "status": "ok",
         "input_root": str(base_root.name or "Root"),
         "output_file": out_file.name,
+        "sort_mode": sort_mode,
+        "date_query_provider": date_query_provider,
+        "date_query": query_diagnostics,
         "summary": summary,
         "failed_files": failed,
-        "files": file_rows,
+        "files": [{k: v for k, v in row.items() if k != "content_file"} for row in sorted_rows],
     }
     manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
     return {

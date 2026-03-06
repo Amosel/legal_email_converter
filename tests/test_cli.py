@@ -98,6 +98,48 @@ class CliTests(unittest.TestCase):
         self.assertEqual(cm.exception.code, 2)
         self.assertIn("A path is required.", err.getvalue())
 
+    def test_unified_export_flags_are_forwarded(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "case"
+            source.mkdir(parents=True, exist_ok=True)
+            out_file = root / "x.txt"
+            argv = [
+                "legal-email-converter",
+                "unified-export",
+                "--input",
+                str(source),
+                "--out",
+                str(out_file),
+                "--sort-mode",
+                "date-query",
+                "--date-query-provider",
+                "ollama",
+                "--ollama-model",
+                "llama3.2:3b",
+                "--ollama-url",
+                "http://localhost:11434/api",
+                "--date-query-strict",
+                "--date-query-retries",
+                "3",
+                "--no-date-query-preflight",
+            ]
+            with mock.patch.object(sys, "argv", argv), mock.patch.object(
+                cli,
+                "run_unified_export",
+                return_value={"status": "ok"},
+            ) as unified_mock:
+                cli.main()
+
+            kwargs = unified_mock.call_args.kwargs
+            self.assertEqual(kwargs["sort_mode"], "date_query_then_path")
+            self.assertEqual(kwargs["date_query_provider"], "ollama")
+            self.assertEqual(kwargs["ollama_model"], "llama3.2:3b")
+            self.assertEqual(kwargs["ollama_base_url"], "http://localhost:11434/api")
+            self.assertTrue(kwargs["date_query_strict"])
+            self.assertEqual(kwargs["date_query_retries"], 3)
+            self.assertFalse(kwargs["date_query_preflight"])
+
 
 if __name__ == "__main__":
     unittest.main()

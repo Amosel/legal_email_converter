@@ -185,6 +185,44 @@ def build_parser() -> argparse.ArgumentParser:
     unified_cmd.add_argument("--input", help="Input folder or file (.msg/.pdf). If omitted, prompts interactively.")
     unified_cmd.add_argument("--out", help="Output text file path (default: <input-folder>/unified_case_export.txt)")
     unified_cmd.add_argument("--skip-ocr", action="store_true", help="Use text layer only for PDFs (faster).")
+    unified_cmd.add_argument(
+        "--sort-mode",
+        choices=["path", "date-signal", "date-query"],
+        default="path",
+        help="Ordering mode for output: path (default), date-signal, or date-query.",
+    )
+    unified_cmd.add_argument(
+        "--date-query-provider",
+        choices=["heuristic", "ollama"],
+        default="heuristic",
+        help="Date-query provider used when --sort-mode date-query.",
+    )
+    unified_cmd.add_argument(
+        "--ollama-model",
+        default="llama3.2:3b",
+        help="Ollama model name for date-query mode.",
+    )
+    unified_cmd.add_argument(
+        "--ollama-url",
+        default="http://localhost:11434/api",
+        help="Ollama API base URL for date-query mode.",
+    )
+    unified_cmd.add_argument(
+        "--date-query-strict",
+        action="store_true",
+        help="Fail the run when Ollama preflight/query errors occur (default: fallback to heuristic date signal).",
+    )
+    unified_cmd.add_argument(
+        "--date-query-retries",
+        type=int,
+        default=1,
+        help="Retries per file for Ollama transport/protocol/model errors (default: 1).",
+    )
+    unified_cmd.add_argument(
+        "--no-date-query-preflight",
+        action="store_true",
+        help="Skip initial Ollama ping/model preflight (not recommended).",
+    )
 
     return parser
 
@@ -266,10 +304,22 @@ def main() -> None:
                 out_path = base_dir / "unified_case_export.txt"
                 print(f"Output path not provided. Using default: {out_path}")
 
+            sort_mode_map = {
+                "path": "path",
+                "date-signal": "date_signal_then_path",
+                "date-query": "date_query_then_path",
+            }
             result = run_unified_export(
                 input_path=str(input_path),
                 out_path=str(out_path),
                 skip_ocr=args.skip_ocr,
+                sort_mode=sort_mode_map[args.sort_mode],
+                date_query_provider=args.date_query_provider,
+                ollama_model=args.ollama_model,
+                ollama_base_url=args.ollama_url,
+                date_query_strict=args.date_query_strict,
+                date_query_retries=max(0, int(args.date_query_retries)),
+                date_query_preflight=not bool(args.no_date_query_preflight),
             )
             print(json.dumps(result, indent=2, ensure_ascii=False))
             return
