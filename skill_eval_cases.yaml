@@ -1,0 +1,158 @@
+version: "1.0"
+skill_name: "legal-case-export"
+description: "Repeatable eval cases derived from skill_prd.yaml user stories for workflow selection and contract-boundary checks."
+cases:
+  - id: "story-01-export-mbox-basic"
+    source_story: "US1"
+    title: "Export raw mailbox to review package"
+    prompt: "Create a review package from this raw mbox file for human and LLM review."
+    expected_workflow: "export-mbox"
+    expected_references:
+      - "references/workflows.md"
+    assertions:
+      - "asks for or validates an mbox path"
+      - "selects export-mbox rather than unified-export"
+      - "describes review.md, llm_corpus.jsonl, and manifest.json as output artifacts"
+      - "mentions default output behavior when out-dir is not provided"
+    must_not_claim:
+      - "mbox deduplication"
+      - "multi-mbox merge support"
+
+  - id: "story-02-export-mbox-overwrite-safety"
+    source_story: "US1"
+    title: "Protect existing mailbox export output"
+    prompt: "Re-run this mailbox export without overwriting my previous package unless I explicitly ask for it."
+    expected_workflow: "export-mbox"
+    expected_references:
+      - "references/workflows.md"
+    assertions:
+      - "describes non-destructive default output behavior"
+      - "mentions explicit overwrite behavior only when force is requested"
+      - "does not imply hidden destructive actions"
+    must_not_claim:
+      - "interactive overwrite prompts"
+      - "content-hash versioning"
+
+  - id: "story-03-export-mbox-attachments-defaults"
+    source_story: "US1"
+    title: "Keep raw attachments optional"
+    prompt: "Package this mailbox, but keep the default lean output unless I explicitly need raw attachments."
+    expected_workflow: "export-mbox"
+    expected_references:
+      - "references/workflows.md"
+    assertions:
+      - "states that raw attachments are optional rather than default"
+      - "explains that extracted attachment text may still appear in outputs"
+      - "mentions manifest visibility for attachment inclusion when relevant"
+    must_not_claim:
+      - "attachment redaction support"
+      - "attachment retention by MIME-type filter"
+
+  - id: "story-04-pdf-ingest-default"
+    source_story: "US2"
+    title: "Run safe default PDF ingest"
+    prompt: "Process this folder of PDFs and OCR the scanned ones with the default recommended behavior."
+    expected_workflow: "pdf-ingest"
+    expected_references:
+      - "references/workflows.md"
+      - "references/pdf-ingest.md"
+    assertions:
+      - "selects pdf-ingest"
+      - "prefers the balanced profile by default"
+      - "mentions preflight expectations"
+      - "mentions quality_report.csv or equivalent quality artifacts"
+      - "summarizes the run in terms of statuses and next actions"
+    must_not_claim:
+      - "parallel worker execution"
+
+  - id: "story-05-pdf-retry-targeted"
+    source_story: "US3"
+    title: "Retry only failed or weak OCR files"
+    prompt: "Use the prior quality report and retry only the failed or likely bad OCR PDFs."
+    expected_workflow: "pdf-retry"
+    expected_references:
+      - "references/workflows.md"
+      - "references/pdf-ingest.md"
+    assertions:
+      - "selects pdf-retry"
+      - "asks for or validates a quality report path"
+      - "frames retry as targeted rather than full reprocessing"
+      - "preserves already-good items as untouched"
+    must_not_claim:
+      - "automatic merge across unrelated reports"
+
+  - id: "story-06-unified-export-basic"
+    source_story: "US4"
+    title: "Export mixed case evidence into one deterministic corpus"
+    prompt: "Turn this case folder of msg and pdf files into one deterministic text export."
+    expected_workflow: "unified-export"
+    expected_references:
+      - "references/workflows.md"
+      - "references/unified-export.md"
+    assertions:
+      - "selects unified-export"
+      - "states that only msg and pdf files are included"
+      - "mentions deterministic ordering"
+      - "mentions the manifest written next to the output text file"
+      - "explains default output path behavior when out is omitted"
+    must_not_claim:
+      - "support for docx, xlsx, images, or audio in V1"
+
+  - id: "story-07-unified-export-date-query-fallback"
+    source_story: "US4"
+    title: "Fallback safely from date-query failures"
+    prompt: "Use smarter date ordering for unified export, but do not fail the whole run if Ollama is unavailable unless I asked for strict mode."
+    expected_workflow: "unified-export"
+    expected_references:
+      - "references/unified-export.md"
+    assertions:
+      - "uses public sort mode language path, date-signal, or date-query"
+      - "explains fallback behavior in non-strict mode"
+      - "explains fail-fast behavior in strict mode"
+      - "mentions diagnostics captured in the manifest"
+    must_not_claim:
+      - "quality guarantees for model-derived date ranking"
+
+  - id: "story-08-large-pdf-escalation"
+    source_story: "US2"
+    title: "Escalate large PDF processing in stages"
+    prompt: "I have a huge scanned PDF. Start with the lightest useful pass and only escalate if the quality is poor."
+    expected_workflow: "pdf-ingest"
+    expected_references:
+      - "references/pdf-ingest.md"
+    assertions:
+      - "recommends a staged escalation path"
+      - "starts with a lighter sample before recommending a full thorough pass"
+      - "mentions retry or timeout guidance when quality is poor"
+    must_not_claim:
+      - "that a full OCR pass is always the first best action"
+
+  - id: "story-09-unified-export-partial-failure"
+    source_story: "US5"
+    title: "Preserve partial success on unified export"
+    prompt: "If one file in this mixed case folder is corrupt, finish the rest of the unified export and tell me what failed."
+    expected_workflow: "unified-export"
+    expected_references:
+      - "references/unified-export.md"
+      - "references/workflows.md"
+    assertions:
+      - "describes per-file failure isolation rather than whole-run abort"
+      - "mentions failed_files in the manifest"
+      - "summarizes partial success and next-step guidance without overstating per-file remediation"
+    must_not_claim:
+      - "rich per-file remediation guarantees beyond current V1 scope"
+    evidence_level: "partial"
+
+  - id: "story-10-unsupported-input-narrowing"
+    source_story: "US6"
+    title: "Reject unsupported evidence types cleanly"
+    prompt: "Process this case folder with docx, xlsx, image, audio, and pdf files into one review export."
+    expected_workflow: "narrow-or-reject"
+    expected_references:
+      - "references/workflows.md"
+    assertions:
+      - "states the V1 support boundary for mbox, msg, and pdf"
+      - "does not pretend unsupported evidence types are covered"
+      - "narrows the task to supported evidence types or flags the unsupported inputs explicitly"
+    must_not_claim:
+      - "support for unsupported evidence types in V1"

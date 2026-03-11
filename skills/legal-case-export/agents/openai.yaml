@@ -1,0 +1,4 @@
+interface:
+  display_name: "Legal Case Export"
+  short_description: "Route and run legal evidence exports safely"
+  default_prompt: "Use $legal-case-export to choose the right workflow and safely turn this legal evidence into review-ready exports."

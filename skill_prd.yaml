@@ -1,0 +1,499 @@
+version: "1.0"
+artifact: "legal-case-export PRD"
+last_updated: "2026-03-10"
+authoritative: true
+metadata:
+  owner: "Codex"
+  status: "v1_authored_pending_install"
+  title: "Legal Case Export Skill"
+summary:
+  product_summary: "A Codex skill for turning legal evidence inputs into deterministic, review-ready outputs with minimal operator confusion."
+  key_distinction: "The skill is not a thin wrapper around the CLI. The CLI is the execution engine; the skill adds workflow selection, safety policy, operator-facing UX conventions, and recovery guidance."
+problem:
+  current_workflows:
+    - "Export a raw .mbox mailbox into a review package."
+    - "Ingest PDFs with profile-based extraction and OCR fallback."
+    - "Retry only low-quality or failed PDF files."
+    - "Produce a unified text export from mixed .msg and .pdf case folders."
+  rediscovery_costs:
+    - "Agents must rediscover which command fits the user goal."
+    - "Agents must rediscover safe defaults versus escalation flags."
+    - "Agents must rediscover how to explain progress, outcomes, and recovery."
+  consequence: "Without a skill, execution becomes inconsistent and workflow selection becomes error-prone."
+vision:
+  goal: "Create a reusable Codex skill that behaves like a disciplined case-processing operator."
+  principles:
+    - "Choose the right workflow for the user goal."
+    - "Run preflight checks before destructive or expensive work."
+    - "Prefer deterministic outputs and bounded-risk defaults."
+    - "Surface progress and summaries in a concise, trusted format."
+    - "Recover from failures with explicit next commands."
+    - "Preserve path safety, idempotency, and auditability."
+users:
+  primary:
+    - "Codex instances working on legal evidence processing tasks."
+    - "Technical operators using Codex to process case folders, mailboxes, and scanned PDFs."
+  secondary:
+    - "Attorneys, paralegals, and litigation support staff indirectly relying on Codex outputs."
+    - "Developers maintaining this repository and using the skill as the canonical operating playbook."
+core_user_jobs:
+  - id: CJ1
+    text: "Turn an existing mailbox into a package suitable for human review or LLM ingestion."
+  - id: CJ2
+    text: "Process a folder of PDFs while balancing speed and OCR quality."
+  - id: CJ3
+    text: "Retry only the PDFs that failed or produced bad OCR."
+  - id: CJ4
+    text: "Turn a mixed evidence folder of .msg and .pdf files into one unified, deterministic export."
+  - id: CJ5
+    text: "Understand what happened, what it means, and what to do next when something goes wrong."
+goals:
+  product:
+    - "Reduce workflow-selection errors by making command choice explicit and repeatable."
+    - "Preserve the best UX patterns already defined for the CLI/TUI-like experience."
+    - "Make long-running work feel reliable through preflight, progress, resumability, and retry."
+    - "Standardize operator copy for summaries, warnings, and remediation."
+    - "Keep the skill compact enough for efficient reuse by Codex."
+  ux:
+    - "First useful feedback within 2 seconds for supported workflows."
+    - "Clear status communication before, during, and after execution."
+    - "No hidden destructive behavior."
+    - "Actionable recovery guidance for all common failures."
+    - "Deterministic outputs and stable artifact locations."
+non_goals:
+  - "Replace the underlying CLI implementation."
+  - "Build a graphical interface."
+  - "Add brand, marketing, or end-user collateral outside the skill itself."
+  - "Encode every low-level implementation detail inside SKILL.md."
+  - "Support arbitrary non-legal document pipelines."
+product_principles:
+  - id: PP1
+    name: "Workflow selection before execution"
+    rule: "Identify user intent first, then route to the right workflow."
+    mappings:
+      raw_mailbox: "export-mbox"
+      pdf_corpus: "pdf-ingest"
+      failed_or_weak_ocr_subset: "pdf-retry"
+      mixed_msg_pdf_folder: "unified-export"
+  - id: PP2
+    name: "Safety before throughput"
+    rule: "Prefer explicit path validation, output predictability, resumability, and overwrite awareness over aggressive automation."
+  - id: PP3
+    name: "Explain what happened"
+    rule:
+      - "Explain what happened."
+      - "Explain what it means."
+      - "Explain what to do next."
+  - id: PP4
+    name: "Deterministic artifacts"
+    rule: "Prefer workflows that produce predictable output names, manifest files, quality reports, and relative-path references."
+  - id: PP5
+    name: "Recovery is part of the product"
+    rule: "Retry, resume, and fallback guidance are first-class UX features."
+skill_definition:
+  final_skill_name: "legal-case-export"
+  trigger_description: "Use when Codex needs to process legal evidence files such as .mbox, .msg, and .pdf into review-ready exports, OCR quality reports, retry flows, or unified case text outputs; especially when the task requires workflow selection, safe execution, progress reporting, deterministic artifacts, or recovery guidance."
+v1_scope:
+  framing: "CLI-backed and workflow-framed"
+  included:
+    - "Skill routing for export-mbox, pdf-ingest, pdf-retry, and unified-export."
+    - "SKILL.md with workflow selection, safe defaults, and remediation conventions."
+    - "agents/openai.yaml."
+    - "Focused references for workflows, PDF ingest, and unified export."
+    - "No new runtime scripts unless a deterministic gap is found during authoring."
+  excluded:
+    - "MCP-native execution instructions as the primary path."
+    - "New processing features beyond current repository capabilities."
+    - "Bundled assets."
+    - "New OCR, mailbox, or evidence-processing code."
+user_stories:
+  - id: US1
+    role: "operator"
+    want: "export a raw .mbox mailbox into a review package"
+    so_that: "the output can be handed to a human reviewer or an LLM workflow"
+    expected_workflow: "export-mbox"
+    acceptance_focus:
+      - "Validate mailbox path."
+      - "Explain output artifacts."
+      - "Preserve overwrite clarity."
+  - id: US2
+    role: "operator"
+    want: "run PDF ingest with a safe default profile"
+    so_that: "useful extraction quality is achieved without tuning flags first"
+    expected_workflow: "pdf-ingest"
+    acceptance_focus:
+      - "Default to balanced profile."
+      - "Use preflight."
+      - "Summarize statuses and next actions."
+  - id: US3
+    role: "operator"
+    want: "retry only failed or weak OCR files"
+    so_that: "already-good PDFs are not reprocessed"
+    expected_workflow: "pdf-retry"
+    acceptance_focus:
+      - "Validate report path."
+      - "Target only selected statuses."
+      - "Leave good items untouched."
+  - id: US4
+    role: "operator"
+    want: "export a mixed .msg and .pdf evidence folder into one deterministic text corpus"
+    so_that: "the case can be reviewed in one place"
+    expected_workflow: "unified-export"
+    acceptance_focus:
+      - "Deterministic discovery and ordering."
+      - "Manifest next to output."
+      - "Per-file failure isolation."
+  - id: US5
+    role: "operator"
+    want: "clear next-step guidance when a run partially fails"
+    so_that: "recovery does not require rediscovering the workflow"
+    expected_workflow: "contextual"
+    acceptance_focus:
+      - "Explain partial success."
+      - "Point to next step or retry path."
+      - "Avoid overstating remediation guarantees."
+  - id: US6
+    role: "Codex instance"
+    want: "concise routing instructions and only the relevant reference material"
+    so_that: "the right workflow can be executed without loading the whole repository into context"
+    expected_workflow: "contextual"
+    acceptance_focus:
+      - "Keep SKILL.md concise."
+      - "Load references selectively."
+scenarios:
+  - id: S1
+    name: "Mailbox review packaging"
+    user_intents:
+      - "Turn this raw mbox into something I can review."
+      - "Create an LLM-ready package from this mailbox."
+    skill_behavior:
+      - "Validate that the raw mailbox file exists."
+      - "Choose export-mbox."
+      - "Explain major output artifacts."
+      - "Report overwrite behavior and optional flags."
+      - "Summarize result paths and next review step."
+  - id: S2
+    name: "PDF corpus ingest"
+    user_intents:
+      - "Process these PDFs and OCR the scanned ones."
+      - "Tell me which PDFs failed or have bad OCR."
+    skill_behavior:
+      - "Run preflight."
+      - "Choose pdf-ingest with sensible default profile."
+      - "Explain profile tradeoffs only when relevant."
+      - "Show aggregate progress, not noisy spam."
+      - "Summarize status counts and artifact paths."
+      - "Suggest retry when quality results warrant it."
+  - id: S3
+    name: "Targeted recovery"
+    user_intents:
+      - "Retry only the bad OCR files."
+      - "Recover from failed PDF processing."
+    skill_behavior:
+      - "Validate report path."
+      - "Choose pdf-retry."
+      - "Keep already-good files untouched."
+      - "Summarize what was retried and what changed."
+  - id: S4
+    name: "Unified case export"
+    user_intents:
+      - "Turn this case folder into one text export."
+      - "Combine .msg and .pdf evidence into one deterministic file."
+    skill_behavior:
+      - "Validate input path."
+      - "Choose unified-export."
+      - "Explain output default if --out is omitted."
+      - "Preserve deterministic ordering."
+      - "Continue on per-file failure and record it in the manifest."
+      - "Summarize counts, failures, and sorting mode used."
+information_architecture:
+  skill_md:
+    include:
+      - "Workflow selection logic."
+      - "Preflight expectations."
+      - "Safe default commands."
+      - "Summary and remediation conventions."
+      - "Instructions for when to load specific references."
+    exclude:
+      - "Long implementation histories."
+      - "Full acceptance specs."
+      - "Duplicated command catalogs."
+  references:
+    workflows_md:
+      include:
+        - "Top user intents mapped to workflows."
+        - "Command patterns."
+        - "Input/output expectations."
+        - "Default versus escalation flags."
+        - "Shared summary, warning, and remediation phrasing."
+    pdf_ingest_md:
+      include:
+        - "Profiles and tradeoffs."
+        - "Status model."
+        - "Resume and retry conventions."
+        - "Large or hard PDF escalation ladder."
+    unified_export_md:
+      include:
+        - "Discovery rules."
+        - "Sorting modes."
+        - "Manifest expectations."
+        - "Ollama and date-query fallback behavior."
+implementation_decisions:
+  delivery_shape:
+    authoring_path: "skills/legal-case-export"
+    root_folder: "legal-case-export"
+    required_files:
+      - "SKILL.md"
+      - "agents/openai.yaml"
+      - "references/workflows.md"
+      - "references/pdf-ingest.md"
+      - "references/unified-export.md"
+    build_sequence:
+      - "Initialize the skill early with init_skill.py in skills/legal-case-export."
+      - "Replace scaffolded SKILL.md content with the PRD-backed outline."
+      - "Draft the three reference files."
+      - "Regenerate or update agents/openai.yaml after metadata is finalized."
+      - "Run quick_validate.py before eval and installation."
+  positioning:
+    - "The skill is named for the operator job, not the current package name."
+    - "V1 is explicitly CLI-backed."
+    - "MCP execution guidance is omitted from V1 skill content."
+  interface_decisions:
+    display_name: "Legal Case Export"
+    short_description: "Route and run legal evidence exports safely"
+    default_prompt: "Use $legal-case-export to choose the right workflow and safely turn this legal evidence into review-ready exports."
+  resource_decisions:
+    - "SKILL.md stays short and procedural."
+    - "Generic operator copy belongs in references/workflows.md, not a separate operator-copy.md file."
+    - "No scripts directory in V1 unless a real deterministic gap appears."
+    - "No assets directory in V1."
+  command_contract_decisions:
+    public_sort_mode_names:
+      - "path"
+      - "date-signal"
+      - "date-query"
+    manifest_behavior: "Underlying services may normalize to canonical internal values in manifests."
+    documentation_rule: "Use public CLI names in skill examples unless explicitly discussing service-level contracts."
+  scope_boundaries:
+    supported_types:
+      - ".mbox"
+      - ".msg"
+      - ".pdf"
+    unsupported_types:
+      - ".docx"
+      - ".xlsx"
+      - "images"
+      - "audio"
+    unified_export_failure_boundary: "Per-file failure recording is in scope; rich per-file remediation logic is not a V1 guarantee."
+implementation_status:
+  current_state:
+    - "The V1 skill has been authored under skills/legal-case-export/."
+    - "The authored skill contains SKILL.md, agents/openai.yaml, and three reference files."
+    - "The skill has not been installed into ~/.codex/skills."
+  validation_completed:
+    - "skill-creator quick_validate.py passed on skills/legal-case-export/."
+    - "scripts/eval_skill_cases.py passed 10/10 read-only cases against skill_eval_cases.yaml."
+  validation_not_completed:
+    - "No execute-mode eval has been built or run."
+    - "No model-driven semantic eval has been run."
+    - "No post-install smoke test through actual Codex invocation has been run."
+requirements:
+  ux:
+    preflight:
+      - "Validate input exists and is readable."
+      - "Validate output location is writable or predictable."
+      - "Validate required dependencies for the chosen flow."
+      - "Fail with remediation, not vague errors."
+    missing_ocr_dependency:
+      - "Explain that quick can still run without OCR."
+      - "Provide exact remediation path when available from the toolchain."
+    progress:
+      - "Show aggregate progress."
+      - "Include current mode when relevant."
+      - "Avoid unbounded per-file noise by default."
+      - "Surface stage transitions clearly."
+    summary:
+      - "Overall completion state."
+      - "Key counts."
+      - "Exact output artifact locations."
+      - "Any failed or suspect items."
+      - "Recommended next command or next action."
+    error_structure:
+      - "What failed."
+      - "What it means."
+      - "What to do next."
+    common_error_cases:
+      - "Input path missing."
+      - "Output path invalid or unwritable."
+      - "OCR dependency missing."
+      - "Timeout on large scanned PDF."
+      - "Partial run with resumable state."
+      - "Ollama preflight or query failure in date-query mode."
+  functional:
+    - id: FR1
+      name: "Intent routing"
+      text: "Map user requests to supported workflows without unnecessary follow-up questions when the path is inferable."
+    - id: FR2
+      name: "Safe defaults"
+      text:
+        - "Prefer pdf-ingest --profile balanced."
+        - "Prefer deterministic output defaults."
+        - "Prefer non-destructive behavior unless explicit overwrite is requested."
+    - id: FR3
+      name: "Recovery guidance"
+      text:
+        - "Recommend pdf-retry when quality statuses warrant it."
+        - "Recommend --resume <run_id> when interrupted runs are detected."
+        - "Escalate to stricter or slower modes only after lighter options fail."
+    - id: FR4
+      name: "Deterministic output interpretation"
+      text:
+        - "Understand and explain quality statuses."
+        - "Understand and explain manifest files."
+        - "Understand relative path semantics."
+        - "Explain summary counts and their meaning."
+    - id: FR5
+      name: "Large file escalation"
+      text:
+        - "Use quick sample first."
+        - "Escalate to deeper balanced sample."
+        - "Escalate to full thorough pass."
+        - "Use targeted retry with raised timeout when needed."
+    - id: FR6
+      name: "Unified export contract"
+      text:
+        - "Preserve deterministic discovery."
+        - "Include only .msg and .pdf inputs."
+        - "Use predictable output defaults."
+        - "Record failures without aborting the full run."
+      quality_note:
+        - "Per-file failures are reliably captured and surfaced in the manifest today."
+        - "Per-file remediation guidance is still an improvement area, not a fully mature contract."
+acceptance_criteria:
+  skill_level:
+    - "Select the correct workflow for representative prompts without requiring source-code inspection each time."
+    - "Tell Codex when to read references/pdf-ingest.md versus references/unified-export.md."
+    - "Keep SKILL.md concise and procedural."
+    - "Avoid duplicating long sections from repo docs unless rewritten into reusable operator guidance."
+  inherited_ux:
+    - "Single happy-path default for PDF ingest."
+    - "Mandatory preflight before processing."
+    - "Structured live progress."
+    - "End-of-run status counts."
+    - "Per-file quality artifact generation."
+    - "Targeted retry flow."
+    - "Resume support."
+    - "Actionable summary copy."
+    - "Clear artifact paths."
+  inherited_unified_export:
+    - "Discovery includes only .msg and .pdf."
+    - "Traversal is recursive and deterministic."
+    - "Output file defaults are predictable."
+    - "One bad file does not abort the whole import."
+    - "Manifest counts stay consistent with discovered files."
+    - "Failed files are recorded reliably, but individualized remediation copy is not yet a hard product guarantee."
+testing_decisions:
+  skill_artifact_validation:
+    - "Validate skill frontmatter and folder shape before claiming completion."
+    - "Validate that agents/openai.yaml matches final SKILL.md wording and trigger intent."
+  eval_execution_model:
+    required_v1_mode: "read-only"
+    future_mode: "optional execute mode"
+    rule:
+      - "Run V1 eval through a repo-local harness against skill files and skill_eval_cases.yaml."
+      - "Capture structured results and evidence without executing repo workflows by default."
+      - "Only add execute mode later for explicit representative CLI scenarios."
+  prompt_based_evaluation:
+    required_prompts:
+      - "Export a raw mailbox into a review package."
+      - "Ingest a PDF folder with default behavior."
+      - "Retry failed OCR files from a prior report."
+      - "Export a mixed .msg and .pdf folder into one unified corpus."
+      - "Handle a partially failed unified export with correct next-step guidance."
+      - "Reject or narrow unsupported evidence-type requests cleanly."
+  runtime_verification:
+    regression_command: "python3 -m unittest tests.test_unified_export tests.test_cli -v"
+    helper_script_rule: "If the skill adds any new deterministic helper scripts, those scripts must also be executed during validation."
+  eval_report_contract:
+    statuses:
+      - "PASS"
+      - "WARN"
+      - "FAIL"
+      - "NOT_RUN"
+    required_fields:
+      - "version"
+      - "skill_name"
+      - "mode"
+      - "run_id"
+      - "summary"
+      - "cases"
+      - "artifacts"
+    invalid_output_rule: "Retry invalid evaluator JSON up to two more times; if still invalid, mark the affected case WARN and record the parse failure."
+  review_standard:
+    match: "Runtime behavior is verified or contractually established in code plus tests."
+    partial: "Behavior is defined in product docs or UX specs but not fully verified in runtime review."
+    mismatch: "The PRD expectation and current contract diverge."
+handoff_notes:
+  important_knowledge:
+    - "The built skill intentionally omits MCP guidance from V1 content."
+    - "The built skill intentionally uses three references only; there is no operator-copy.md."
+    - "The eval runner is deterministic and static; it validates skill content and boundaries, not model behavior."
+    - "Mailbox export wording is covered in the skill, but mailbox runtime was not re-reviewed as deeply as pdf-ingest and unified-export during this handoff."
+  next_steps:
+    - "Install or copy skills/legal-case-export/ into ~/.codex/skills if runtime use is desired."
+    - "Run a post-install smoke test with one prompt from each major workflow."
+    - "If stronger validation is needed, extend scripts/eval_skill_cases.py or add an execute-mode runner."
+success_metrics:
+  primary:
+    - "Workflow selection accuracy on test prompts."
+    - "Percentage of runs that complete without human clarification."
+    - "Percentage of failures that yield an explicit next-step command."
+    - "Reduction in redundant repo-doc reading during skill usage."
+  secondary:
+    - "Time to first meaningful operator feedback."
+    - "Retry success rate after initial failed or weak OCR runs."
+    - "Frequency of incorrect command choice by Codex when the skill is active."
+risks:
+  - "The skill becomes a thin CLI mirror and adds little value."
+  - "The skill becomes too long and loses the benefits of progressive disclosure."
+  - "Historical docs may leak stale behavior into the skill if copied directly."
+  - "The skill may overfit to current commands and under-specify future MCP/TUI evolution."
+mitigations:
+  - "Define the skill around operator jobs, not command inventory."
+  - "Keep SKILL.md procedural and short."
+  - "Move detailed behavior into references."
+  - "Treat existing acceptance docs as source material, not skill output."
+  - "Write the skill in a way that can survive migration from CLI-first to MCP/TUI-first execution."
+out_of_scope_v1:
+  - "Automatic orchestration of multi-step end-to-end case runs beyond current CLI capabilities."
+  - "Skill-managed installation of external OCR system dependencies."
+  - "Direct GUI/TUI rendering instructions beyond copy and behavior requirements."
+  - "Multi-user audit dashboards."
+phased_delivery_plan:
+  - id: P1
+    name: "Skill skeleton"
+    steps:
+      - "Initialize skill folder."
+      - "Write trigger-rich frontmatter."
+      - "Define workflow routing and safe defaults in SKILL.md."
+      - "Add core references for workflows, PDF ingest, and unified export."
+  - id: P2
+    name: "UX hardening"
+    steps:
+      - "Add canonical summary and remediation patterns."
+      - "Encode large-file escalation guidance."
+      - "Align references with acceptance docs."
+  - id: P3
+    name: "Validation"
+    steps:
+      - "Validate skill structure and frontmatter."
+      - "Test against representative prompts for each workflow."
+      - "Refine trigger description based on misses."
+  - id: P4
+    name: "Iteration"
+    steps:
+      - "Observe real use."
+      - "Patch missing guidance."
+      - "Remove stale or redundant instructions."
+recommendation:
+  text: "Build the first version as legal-case-export, backed by the current CLI and documented as a workflow skill rather than a command catalog."

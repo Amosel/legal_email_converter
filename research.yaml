@@ -1,0 +1,130 @@
+version: "4.0"
+artifact: "legal-case-export final research decisions"
+last_updated: "2026-03-11"
+authoritative: true
+purpose: "Compact record of implementation-shaping research outcomes that supplement the canonical PRD."
+working_rules:
+  - "Canonical requirements and user stories live in skill_prd.yaml."
+  - "Canonical eval cases live in skill_eval_cases.yaml."
+  - "This file records only final decisions and the evidence basis for them."
+current_context:
+  skill_name: "legal-case-export"
+  v1_execution_mode: "CLI-backed"
+  authoring_path: "skills/legal-case-export"
+  required_skill_files:
+    - "SKILL.md"
+    - "agents/openai.yaml"
+    - "references/workflows.md"
+    - "references/pdf-ingest.md"
+    - "references/unified-export.md"
+decisions:
+  authoring_and_build:
+    authoring_location:
+      decision: "Author the skill in this repository at skills/legal-case-export/ and install or copy it into ~/.codex/skills only after validation."
+      evidence:
+        - "skill-creator init_skill.py supports arbitrary output paths."
+        - "skill-installer treats ~/.codex/skills as install destination, not authoring source."
+    build_sequence:
+      decision: "Scaffold early with init_skill.py, then replace scaffold content with PRD-backed content, validate, and only then install if needed."
+      sequence:
+        - "Initialize skills/legal-case-export/ with references only."
+        - "Write SKILL.md from the PRD-backed outline."
+        - "Write the three reference files."
+        - "Finalize agents/openai.yaml."
+        - "Run quick_validate.py."
+        - "Run prompt-based eval against skill_eval_cases.yaml."
+      evidence:
+        - "skill-creator guidance recommends initialize before edit and validate."
+  interface:
+    display_name: "Legal Case Export"
+    short_description: "Route and run legal evidence exports safely"
+    default_prompt: "Use $legal-case-export to choose the right workflow and safely turn this legal evidence into review-ready exports."
+    evidence:
+      - "openai_yaml.md requires exact interface strings and a $skill-name default prompt."
+      - "The PRD spans four workflows, so metadata must stay routing-first."
+  skill_shape:
+    skill_md_boundary:
+      decision: "SKILL.md stays short and procedural: routing, shared preflight/safety, execution conventions, reference-loading guidance, and V1 boundaries."
+      exclude:
+        - "long command catalogs"
+        - "deep profile matrices"
+        - "sorting deep-dives"
+        - "eval instructions"
+        - "implementation history"
+    references:
+      decision: "Use exactly three V1 reference files: workflows, pdf-ingest, unified-export."
+      notes:
+        - "Do not create operator-copy.md."
+        - "Shared summary, warning, and remediation phrasing belongs in references/workflows.md."
+    scope_boundary:
+      decision: "Omit MCP execution guidance from V1 skill content."
+  eval:
+    model:
+      decision: "Use a read-only-first eval model in V1; execute mode is optional later."
+      notes:
+        - "Read-only eval inspects skill files, workflow routing, references, and claim boundaries."
+        - "Execute mode may be added later for representative CLI scenarios."
+    report_contract:
+      decision: "Eval output should be strict JSON with PASS/WARN/FAIL/NOT_RUN statuses, per-case assertion results, evidence, and summary notes."
+      notes:
+        - "Invalid evaluator JSON should be retried up to two more times."
+    canonical_fixture:
+      decision: "skill_eval_cases.yaml is the canonical V1 prompt fixture."
+    current_runner:
+      decision: "scripts/eval_skill_cases.py is the current local read-only eval runner."
+      notes:
+        - "It validates the built skill against skill_eval_cases.yaml deterministically."
+        - "It is a static content-and-boundary check, not a model-driven semantic evaluator."
+        - "It is sufficient for handoff-level regression, not for final production confidence."
+  workflow_claims:
+    pdf_ingest:
+      verified_claims:
+        - "dependency preflight"
+        - "balanced default profile behavior"
+        - "quality_report.csv, failed_files.json, and manifest.json outputs"
+        - "plain progress output"
+        - "rich-to-plain fallback on non-TTY"
+        - "quiet summary-only mode"
+        - "resume semantics"
+        - "targeted retry from quality_report.csv"
+        - "summary copy with next retry step"
+      wording_boundary:
+        - "Do not imply real parallel worker execution."
+        - "Describe OCR quality as expectation-based, not guaranteed."
+        - "Describe large-file escalation as operator guidance built on max_pages."
+      evidence:
+        - "src/legal_email_converter/pdf_ingest.py"
+        - "tests/test_pdf_ingest.py"
+    unified_export:
+      failure_taxonomy:
+        - "input-level blockers"
+        - "per-file extraction failures recorded in failed_files and manifest rows"
+        - "date-query provider failures recorded in manifest.date_query"
+      remediation_boundary:
+        - "Promise partial success and manifest visibility."
+        - "Promise category-level next steps only."
+        - "Do not promise tailored per-file remediation."
+      sort_mode_rule:
+        - "Use public CLI sort mode names in skill examples: path, date-signal, date-query."
+      evidence:
+        - "src/legal_email_converter/unified_export.py"
+        - "tests/test_unified_export.py"
+  deferred:
+    helper_scripts:
+      decision: "Do not add helper scripts in V1 unless actual authoring reveals a repeated fragile manual task."
+handoff_status:
+  current_state:
+    - "skills/legal-case-export/ has been authored and structurally validated."
+    - "The current skill passed quick_validate.py."
+    - "The current skill passed scripts/eval_skill_cases.py with 10/10 PASS."
+  not_done:
+    - "The skill is not installed into ~/.codex/skills."
+    - "No execute-mode or post-install smoke eval has been run."
+  next_steps:
+    - "Install or copy the authored skill into ~/.codex/skills if operational use is needed."
+    - "Run one smoke prompt per workflow after installation."
+    - "Only build execute-mode eval if stronger runtime confidence is needed."
+definition_of_done:
+  - "skill_prd.yaml remains the canonical requirements source."
+  - "skill_eval_cases.yaml remains the canonical eval fixture."
+  - "This file stays compact and decision-oriented."
