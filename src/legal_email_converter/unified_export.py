@@ -19,7 +19,14 @@ from .ollama_client import (
 
 
 SUPPORTED_SUFFIXES = {".msg", ".pdf"}
-SORT_MODES = {"path", "date_signal_then_path", "date_query_then_path"}
+SORT_MODE_ALIASES = {
+    "path": "path",
+    "date-signal": "date_signal_then_path",
+    "date-query": "date_query_then_path",
+    "date_signal_then_path": "date_signal_then_path",
+    "date_query_then_path": "date_query_then_path",
+}
+SORT_MODES = set(SORT_MODE_ALIASES)
 
 
 @dataclass
@@ -113,6 +120,7 @@ def derive_date_signal(doc: UnifiedDoc) -> dict[str, object]:
 
 
 def _sort_rows(rows: list[dict[str, object]], *, mode: str) -> list[dict[str, object]]:
+    mode = SORT_MODE_ALIASES.get(mode, mode)
     if mode == "path":
         return sorted(rows, key=lambda r: str(r["relative_path"]).lower())
 
@@ -218,6 +226,7 @@ def run_unified_export(
 ) -> dict[str, object]:
     if sort_mode not in SORT_MODES:
         raise ValueError(f"sort_mode must be one of: {', '.join(sorted(SORT_MODES))}")
+    canonical_sort_mode = SORT_MODE_ALIASES[sort_mode]
 
     in_path = Path(input_path).expanduser().resolve()
     if not in_path.exists():
@@ -236,7 +245,7 @@ def run_unified_export(
     date_source_counts: dict[str, int] = {}
     failed: list[str] = []
     query_diagnostics: dict[str, object] = {
-        "enabled": bool(sort_mode == "date_query_then_path"),
+        "enabled": bool(canonical_sort_mode == "date_query_then_path"),
         "provider": date_query_provider,
         "strict": bool(date_query_strict),
         "preflight_enabled": bool(date_query_preflight),
@@ -253,7 +262,7 @@ def run_unified_export(
     with tempfile.TemporaryDirectory(prefix="unified_export_") as tmp_dir:
         artifact_root = Path(tmp_dir)
         provider = derive_date_signal
-        if sort_mode == "date_query_then_path" and date_query_provider == "ollama":
+        if canonical_sort_mode == "date_query_then_path" and date_query_provider == "ollama":
             client = OllamaClient(base_url=ollama_base_url)
             preflight_ok = True
 
@@ -376,7 +385,7 @@ def run_unified_export(
             )
 
         # Pass 2: order compact rows and stream content from artifacts to final output.
-        sorted_rows = _sort_rows(file_rows, mode=sort_mode)
+        sorted_rows = _sort_rows(file_rows, mode=canonical_sort_mode)
         for index, row in enumerate(sorted_rows, start=1):
             row["index"] = index
         _write_txt(out_file, in_path, sorted_rows)
@@ -399,7 +408,7 @@ def run_unified_export(
         "status": "ok",
         "input_root": str(base_root.name or "Root"),
         "output_file": out_file.name,
-        "sort_mode": sort_mode,
+        "sort_mode": canonical_sort_mode,
         "date_query_provider": date_query_provider,
         "date_query": query_diagnostics,
         "summary": summary,

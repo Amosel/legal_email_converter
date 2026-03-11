@@ -112,6 +112,40 @@ class UnifiedExportTests(unittest.TestCase):
             text = out.read_text(encoding="utf-8")
             self.assertLess(text.find("Path: alpha.msg"), text.find("Path: zeta.pdf"))
 
+    def test_sort_mode_date_signal_alias_orders_by_inferred_date(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "zeta.pdf").write_text("%PDF-1.4", encoding="utf-8")
+            (root / "alpha.msg").write_text("x", encoding="utf-8")
+            out = root / "out.txt"
+
+            fake_docs = [
+                unified_export.UnifiedDoc(
+                    kind="PDF",
+                    path=root / "zeta.pdf",
+                    metadata={},
+                    content="Filed on 2025-05-01",
+                ),
+                unified_export.UnifiedDoc(
+                    kind="MSG",
+                    path=root / "alpha.msg",
+                    metadata={"Date": "2024-01-01 09:30:00-05:00"},
+                    content="",
+                ),
+            ]
+
+            with mock.patch.object(unified_export, "_safe_extract", side_effect=fake_docs):
+                result = unified_export.run_unified_export(
+                    input_path=str(root),
+                    out_path=str(out),
+                    skip_ocr=True,
+                    sort_mode="date-signal",
+                )
+
+            text = out.read_text(encoding="utf-8")
+            self.assertLess(text.find("Path: alpha.msg"), text.find("Path: zeta.pdf"))
+            self.assertEqual(result["sort_mode"], "date_signal_then_path")
+
     def test_sort_mode_date_query_then_path_uses_provider(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -144,6 +178,41 @@ class UnifiedExportTests(unittest.TestCase):
 
             text = out.read_text(encoding="utf-8")
             self.assertLess(text.find("Path: b.pdf"), text.find("Path: a.msg"))
+
+    def test_sort_mode_date_query_alias_uses_provider(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "b.pdf").write_text("%PDF-1.4", encoding="utf-8")
+            (root / "a.msg").write_text("x", encoding="utf-8")
+            out = root / "out.txt"
+
+            fake_docs = [
+                unified_export.UnifiedDoc(kind="PDF", path=root / "b.pdf", metadata={}, content=""),
+                unified_export.UnifiedDoc(kind="MSG", path=root / "a.msg", metadata={}, content=""),
+            ]
+
+            def fake_query(*args, **kwargs):
+                rel = kwargs.get("relative_path", "")
+                if rel == "b.pdf":
+                    return {"value": "2020-01-01", "source": "query.path", "confidence": 0.9}
+                return {"value": "2021-01-01", "source": "query.path", "confidence": 0.9}
+
+            with mock.patch.object(unified_export, "_safe_extract", side_effect=fake_docs), mock.patch.object(
+                unified_export, "query_date_signal_with_ollama", side_effect=fake_query
+            ):
+                result = unified_export.run_unified_export(
+                    input_path=str(root),
+                    out_path=str(out),
+                    skip_ocr=True,
+                    sort_mode="date-query",
+                    date_query_provider="ollama",
+                    date_query_preflight=False,
+                )
+
+            text = out.read_text(encoding="utf-8")
+            self.assertLess(text.find("Path: b.pdf"), text.find("Path: a.msg"))
+            self.assertTrue(result["date_query"]["enabled"])
+            self.assertEqual(result["sort_mode"], "date_query_then_path")
 
     def test_date_query_ollama_preflight_failure_falls_back_when_not_strict(self):
         with tempfile.TemporaryDirectory() as tmp:
